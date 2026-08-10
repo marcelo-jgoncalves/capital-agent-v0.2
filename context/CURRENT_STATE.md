@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T16:10:11-03:00
+- Generated at: 2026-08-10T16:14:48-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -54,6 +54,7 @@ None.
 - DEC-20260810-451C32
 - DEC-20260810-875930
 - DEC-20260810-A032A0
+- DEC-20260810-C5EA4F
 
 ## Recent system changes (journal/system_changes/)
 

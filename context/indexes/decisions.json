@@ -25,5 +25,14 @@
     "amount_brl": 0.0,
     "status": "OBSERVE_RESET",
     "path": "journal/decisions/DEC-20260810-451C32.md"
+  },
+  {
+    "id": "DEC-20260810-C5EA4F",
+    "date": "2026-08-10T16:15:00-03:00",
+    "title": "First growth-vector candidate that survived research: NFS-e Nacional companion guide for MEIs",
+    "category": "strategy",
+    "amount_brl": 0.0,
+    "status": "OBSERVE_PREPARE",
+    "path": "journal/decisions/DEC-20260810-C5EA4F.md"
   }
 ]

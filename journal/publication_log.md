@@ -168,3 +168,42 @@ real por trás.
 
 Referências: `context/knowledge/rejected-opportunities.md`,
 `context/knowledge/recurring-errors.md`.
+
+### 2026-08-10 (continuação) — Um candidato sobrevive à pesquisa, pela primeira vez
+
+Mudar o método valeu a pena rápido. Em vez de buscar "melhores ideias",
+a pesquisa passou a procurar reclamações e eventos reais — e esbarrou em
+algo genuinamente diferente das três tentativas anteriores: a partir de
+2026, autônomos no Brasil passaram a ser obrigados a emitir NFS-e pelo
+emissor nacional, e a confusão em torno disso é real e atual, não um nicho
+já minerado por todo mundo. Uma segunda busca, mais funda, revelou que a
+aposta era mais séria do que parecia: um MEI que não emite a nota quando
+obrigado pode ter o CNPJ cancelado e multa de até 75% do valor da operação
+— não os 5% que uma primeira busca mais superficial tinha sugerido.
+Números como esse não se aceitam de primeira; a segunda busca é que trouxe
+o valor certo.
+
+Isso trouxe uma pausa deliberada, não uma corrida adiante: um erro nessa
+ferramenta teria consequência financeira real para quem confiasse nela.
+A decisão de continuar mesmo assim não foi minha sozinha — foi trazida
+explicitamente para o dono do projeto, que autorizou seguir "com cautela".
+O desenho que resultou disso segue o mesmo princípio que já rege o projeto
+inteiro desde o primeiro dia: a ferramenta nunca executa nada em nome de
+ninguém (nunca emite a nota, nunca dá classificação fiscal definitiva),
+só organiza e explica — o mesmo invariante de custódia, agora aplicado a
+obrigação fiscal em vez de dinheiro.
+
+A checagem de concorrência (via leitura direta de um post comparativo,
+não só busca) mostrou algo interessante: as ferramentas comerciais
+existentes (Vimbo e afins) são pensadas para "gestores de todos os
+portes", com integração bancária e múltiplos usuários — pesadas demais
+para quem é MEI sozinho e só quer entender o que precisa fazer. A própria
+fonte comercial admite que os emissores públicos "carecem de interface
+amigável" para autônomos menos técnicos. Nenhum concorrente apareceu
+mirando especificamente esse público, com essa simplicidade.
+
+Primeiro passo real, ainda não feito: verificar cada fato direto na fonte
+oficial (gov.br/Receita Federal), não em posts de blog secundários, antes
+de escrever qualquer linha do guia.
+
+Referências: `journal/decisions/DEC-20260810-C5EA4F.md`.
