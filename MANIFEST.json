@@ -1,0 +1,60 @@
+{
+  "project": "capital-agent",
+  "version": "0.2",
+  "date": "2026-08-10",
+  "starting_capital_brl": 1000.0,
+  "execution_phase": 0,
+  "features": [
+    "AI-agnostic operating manual",
+    "self-evolution governance",
+    "Evaluation & Critic System",
+    "critical decision human authorization",
+    "broad lawful business-model exploration",
+    "machine-readable criticality policy",
+    "approval artifacts"
+  ],
+  "tests_returncode": 0,
+  "tests_output": "\\n.........\n----------------------------------------------------------------------\nRan 9 tests in 0.001s\n\nOK",
+  "criticality_check": {
+    "critical": true,
+    "requires_human_authorization": true,
+    "reasons": [
+      "live amount exceeds non-critical threshold",
+      "maximum plausible loss exceeds non-critical threshold"
+    ]
+  },
+  "files": [
+    ".env.example",
+    ".gitignore",
+    "AGENTS.md",
+    "AI_OPERATING_MANUAL.md",
+    "ARCHITECTURE.md",
+    "CRITICAL_DECISIONS.md",
+    "EVALUATION_CRITIC_SYSTEM.md",
+    "HUMAN_GATES.md",
+    "INVESTMENT_POLICY.md",
+    "MANIFEST.json",
+    "PHASE0_READINESS_PROMPT.md",
+    "README.md",
+    "ROADMAP.md",
+    "SYSTEM_EVOLUTION.md",
+    "adapters/README.md",
+    "approvals/APPROVAL_REQUEST_TEMPLATE.md",
+    "config/critical_decisions.json",
+    "config/policy.json",
+    "config/system_governance.json",
+    "data/ledger.csv",
+    "experiments/README.md",
+    "journal/AUDIT_TEMPLATE.md",
+    "journal/DECISION_TEMPLATE.md",
+    "journal/POSTMORTEM_TEMPLATE.md",
+    "journal/PREDICTION_TEMPLATE.md",
+    "journal/SYSTEM_CHANGE_TEMPLATE.md",
+    "prompts/weekly_review.md",
+    "scripts/bootstrap.ps1",
+    "src/__pycache__/capital_agent.cpython-313.pyc",
+    "src/capital_agent.py",
+    "tests/__pycache__/test_capital_agent.cpython-313.pyc",
+    "tests/test_capital_agent.py"
+  ]
+}

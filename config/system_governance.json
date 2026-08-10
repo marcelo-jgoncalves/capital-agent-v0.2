@@ -1,0 +1,21 @@
+{
+  "version": "0.1",
+  "self_improvement_enabled": true,
+  "canonical_instruction_file": "AI_OPERATING_MANUAL.md",
+  "vendor_neutral_core_required": true,
+  "autonomous_change_classes": [
+    "A",
+    "B"
+  ],
+  "human_approval_change_classes": [
+    "C"
+  ],
+  "prohibited_change_classes": [
+    "D"
+  ],
+  "require_system_change_journal_for_material_changes": true,
+  "require_rollback_plan_for_class_b": true,
+  "require_tests_for_code_changes": true,
+  "authority_expansion_must_be_separate_decision": true,
+  "same_decision_policy_relaxation_prohibited": true
+}

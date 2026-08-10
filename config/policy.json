@@ -1,0 +1,20 @@
+{
+  "policy_version": "0.1",
+  "currency": "BRL",
+  "initial_capital": 1000.0,
+  "execution_tier": 0,
+  "live_execution_enabled": false,
+  "borrowing_allowed": false,
+  "leverage_allowed": false,
+  "withdrawals_allowed": false,
+  "max_single_live_allocation_pct_equity": 0.1,
+  "max_total_experimental_capital_pct_equity": 0.3,
+  "max_daily_new_risk_pct_equity": 0.1,
+  "max_recurring_monthly_commitment_pct_equity": 0.05,
+  "min_cash_reserve_pct_equity": 0.5,
+  "hard_drawdown_freeze_pct": 0.2,
+  "require_journal_for_material_allocation": true,
+  "material_allocation_brl": 10.0,
+  "human_gate_for_first_live_adapter": true,
+  "secret_storage": "environment_or_os_secret_store_only"
+}

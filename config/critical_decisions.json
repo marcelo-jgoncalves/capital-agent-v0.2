@@ -1,0 +1,17 @@
+{
+  "version": "0.2",
+  "require_human_authorization_for_all_critical_decisions": true,
+  "default_deny_if_classification_uncertain": true,
+  "noncritical_live_money_threshold_brl": 25.0,
+  "noncritical_max_loss_threshold_brl": 25.0,
+  "noncritical_paid_ad_test_threshold_brl": 25.0,
+  "recurring_commitment_is_always_critical": true,
+  "new_business_model_with_external_obligations_is_always_critical": true,
+  "new_live_financial_category_is_always_critical": true,
+  "new_counterparty_with_write_authority_is_always_critical": true,
+  "legal_or_regulatory_uncertainty_is_always_critical": true,
+  "public_representation_of_owner_is_always_critical": true,
+  "new_write_financial_credentials_are_always_critical": true,
+  "policy_relaxation_is_always_critical": true,
+  "critical_policy_change_is_always_critical": true
+}
