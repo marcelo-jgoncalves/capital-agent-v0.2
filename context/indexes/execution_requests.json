@@ -22,5 +22,14 @@
     "max_total_capital_brl": 200.0,
     "status": "pending",
     "path": "execution/human_requests/pending/HER-20260810-544DBF.json"
+  },
+  {
+    "id": "HER-20260810-544DBF",
+    "date": "2026-08-10T15:55:09-03:00",
+    "action": "BUY",
+    "asset": "Tesouro Selic",
+    "executed_total_brl": 195.65,
+    "status": "completed",
+    "path": "execution/human_requests/completed/HER-20260810-544DBF.json"
   }
 ]

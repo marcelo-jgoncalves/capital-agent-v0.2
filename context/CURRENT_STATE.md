@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T15:52:13-03:00
+- Generated at: 2026-08-10T15:56:33-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -11,13 +11,14 @@ Do not hand-edit; edit the underlying sources (ledger, config, experiments, jour
 ## Capital (verified from data/ledger.csv)
 
 - Initial capital: BRL 1000.00
-- Verified cash: BRL 1000.00
-- Reserve instruments booked (data/reserve_assets.json, e.g. Tesouro Selic, conservatively valued at cost): BRL 0.00
+- Verified cash: BRL 804.35
+- Reserve instruments booked (data/reserve_assets.json, e.g. Tesouro Selic, conservatively valued at cost): BRL 195.65
 - Verified equity floor (cash + booked reserve instruments; other market positions still not marked): BRL 1000.00
+  - RA-20260810-1224BE: Tesouro Selic — BRL 195.65 (execution HER-20260810-544DBF)
 - Capital invested (market/experiment buckets): not yet implemented (no bucket-level ledger breakdown)
 - Capital committed (open experiment budgets not yet spent): not yet implemented
 - Drawdown from equity high-water mark: not yet implemented (no high-water-mark tracking yet)
-- Ledger entries: 1
+- Ledger entries: 2
 
 ## Execution tier & limits (config/policy.json)
 
@@ -34,7 +35,7 @@ None recorded. No financial write adapter exists or ever will under this archite
 
 ## Pending Human Execution Requests (execution/human_requests/pending/)
 
-- HER-20260810-544DBF: BUY Tesouro Selic — max_total_capital=BRL 200.0, critical=True, valid_until=2026-08-17T23:59:00-03:00
+None. No financial execution is currently waiting on the human owner.
 
 ## Active experiments
 

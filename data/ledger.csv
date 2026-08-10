@@ -1,2 +1,3 @@
 timestamp,type,category,amount_brl,description,reference
 2026-08-10T09:33:00-03:00,capital_in,reserve,1000.00,Initial experiment capital,INIT-0001
+2026-08-10T15:55:09-03:00,buy,reserve,195.65,Human-confirmed execution of HER-20260810-544DBF (BUY Tesouro Selic),HER-20260810-544DBF

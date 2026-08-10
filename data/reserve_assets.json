@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "RA-20260810-1224BE",
+    "execution_id": "HER-20260810-544DBF",
+    "asset": "Tesouro Selic",
+    "category": "reserve",
+    "book_value_brl": 195.65,
+    "recorded_at": "2026-08-10T15:55:18-03:00",
+    "note": "Tesouro Selic 2031, Selic + 0,07% a.a., vencimento 01/03/2031. Book value at cost; not marked to market or accrued forward (Phase 0 limitation, see SYS-20260810-E87857)."
+  }
+]

@@ -19,7 +19,15 @@
   "criticality_reasons": [
     "live amount exceeds non-critical threshold"
   ],
-  "status": "pending",
+  "status": "completed",
   "instructions": "Execute this operation manually on the appropriate financial platform using your own credentials. The Capital Agent has no capability to execute it. Report the actual result with `confirm-execution`, or `cancel-execution` / `expire-execution` if it will not be executed.",
-  "confirmation": null
+  "confirmation": {
+    "confirmed_at": "2026-08-10T15:55:09-03:00",
+    "executed_quantity": 0.01,
+    "executed_price": 19564.97,
+    "fees_brl": 0.0,
+    "executed_total_brl": 195.65,
+    "executed_timestamp": "2026-08-10T15:55:09-03:00",
+    "notes": "Tesouro Selic 2031 (Selic + 0,07% a.a.), vencimento 01/03/2031, D+0 resgate, D+1 liquidação. Saldo da corretora informado: R.245,62 (inclui fundos fora do experimento, não incorporado ao ledger)."
+  }
 }

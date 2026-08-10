@@ -12,15 +12,33 @@ spec.loader.exec_module(ca)
 
 
 class CapitalAgentTests(unittest.TestCase):
-    def test_initial_cash(self):
-        self.assertEqual(ca.cash_balance(), 1000.00)
+    def test_cash_balance_matches_ledger_arithmetic(self):
+        # Recomputed independently from the real ledger rather than hardcoded,
+        # since this test runs against live repository state that changes as
+        # real transactions are confirmed (see journal/decisions/DEC-20260810-A032A0.md).
+        expected = 0.0
+        for row in ca.read_ledger():
+            amount = float(row["amount_brl"])
+            typ = row["type"]
+            if typ in {"capital_in", "revenue", "sell", "refund"}:
+                expected += amount
+            elif typ in {"expense", "buy", "fee", "tax", "capital_out"}:
+                expected -= amount
+            elif typ == "adjustment":
+                expected += amount
+        self.assertAlmostEqual(ca.cash_balance(), round(expected, 2), places=2)
+
+    def test_equity_floor_equals_cash_plus_reserve_assets(self):
+        self.assertAlmostEqual(
+            ca.current_equity_floor(), ca.cash_balance() + ca.reserve_assets_value(), places=2
+        )
 
     def test_policy_blocks_large_single_allocation(self):
-        issues = ca.policy_check_proposal(150.00)
+        issues = ca.policy_check_proposal(ca.current_equity_floor())  # 100% of equity always exceeds the 10% cap
         self.assertTrue(any("single-allocation" in x for x in issues))
 
     def test_policy_accepts_small_proposal(self):
-        issues = ca.policy_check_proposal(50.00)
+        issues = ca.policy_check_proposal(1.00)
         self.assertEqual(issues, [])
 
     def test_system_governance_enables_self_improvement(self):
