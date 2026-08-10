@@ -16,5 +16,14 @@
     "amount_brl": 0.0,
     "status": "OBSERVE_PREPARE",
     "path": "journal/decisions/DEC-20260810-875930.md"
+  },
+  {
+    "id": "DEC-20260810-451C32",
+    "date": "2026-08-10T12:45:00-03:00",
+    "title": "Build the growth vector from zero: disregard marcelo-goncalves-blog for now",
+    "category": "strategy",
+    "amount_brl": 0.0,
+    "status": "OBSERVE_RESET",
+    "path": "journal/decisions/DEC-20260810-451C32.md"
   }
 ]

@@ -93,21 +93,18 @@ AI operator does not have to rediscover them from scratch.
   post-mortem if it silently failed for a while, or just closing this
   question if it works cleanly).
 
-### Starter-kit digital product (DEC-20260810-875930) — blocked, not abandoned
-- Raised: 2026-08-10.
-- Status: **on hold.** Human owner confirmed the source project
-  (`marcelo-goncalves-blog`) "ainda não está pronto para ser vendido" (not
-  yet ready to be sold/packaged). Do not start extraction/drafting work on
-  this until the human owner signals the source project is mature enough.
-  The IP/ownership question raised alongside the original proposal (whether
-  reusing patterns from that project carries any contractual constraint) is
-  still unanswered and also still open.
-- Why it matters: without this note, a future AI session reading
-  `DEC-20260810-875930`'s "next concrete step" could start this
-  prematurely, wasting effort on source material the human owner has
-  already said isn't ready.
-- What would resolve it: human owner signals the blog/source project has
-  reached a state they consider presentable, and separately confirms there
-  is no IP/ownership constraint on reusing its patterns commercially. Until
-  both are true, the growth-vector search should look at other low-labor
-  digital-product ideas rather than waiting indefinitely on this one.
+### Starter-kit digital product tied to marcelo-goncalves-blog — disregarded, not just paused
+- Raised: 2026-08-10. Superseded: 2026-08-10.
+- Status: **out of scope entirely for now**, not merely blocked. Human owner
+  instructed: "vamos desconsiderar a minha plataforma por enquanto. temos
+  que começar esse projeto do zero. se pudermos contar com ela no futuro, eu
+  aviso aqui" — i.e. do not plan around that project at all; the growth
+  vector must be built from zero, independent of it. If it ever becomes
+  available as an asset, the human owner will say so explicitly in this
+  same channel — do not proactively revisit or ask.
+- Why it matters: `DEC-20260810-875930` is now superseded on this specific
+  point by `DEC-20260810-<from-scratch-pivot>` (see `journal/decisions/`).
+  A future AI session should not treat the blog as a resource to build on
+  unless the human owner has said so in the interim.
+- What would resolve it: only an explicit future signal from the human
+  owner in conversation. Nothing to do until then.
