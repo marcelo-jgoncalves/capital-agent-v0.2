@@ -7,5 +7,14 @@
     "amount_brl": 0.0,
     "status": "OBSERVE_DIRECTION_SETTING",
     "path": "journal/decisions/DEC-20260810-A032A0.md"
+  },
+  {
+    "id": "DEC-20260810-875930",
+    "date": "2026-08-10T12:20:00-03:00",
+    "title": "Pivot away from personally-delivered consulting: minimize human labor",
+    "category": "strategy",
+    "amount_brl": 0.0,
+    "status": "OBSERVE_PREPARE",
+    "path": "journal/decisions/DEC-20260810-875930.md"
   }
 ]

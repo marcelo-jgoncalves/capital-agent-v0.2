@@ -169,5 +169,14 @@
     "context_hint": "Trigger 'critical_decision_generated' fired: 1 new pending approval(s)",
     "queued_at": "2026-08-10T11:50:16-03:00",
     "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-274636",
+    "job_key": "trigger:critical_decision_generated:2026-08-10T12:20:16-03:00",
+    "kind": "trigger",
+    "requires_ai_reasoning": true,
+    "context_hint": "Trigger 'critical_decision_generated' fired: 1 new pending approval(s)",
+    "queued_at": "2026-08-10T12:20:16-03:00",
+    "status": "queued"
   }
 ]

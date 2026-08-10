@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T12:09:20-03:00
+- Generated at: 2026-08-10T12:20:49-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -38,11 +38,11 @@ None. No financial execution is currently waiting on the human owner.
 
 ## Active experiments
 
-- EXP-20260810-1F7147: Validate demand for a paid AI/AWS engineering micro-offer — status=planned, budget=BRL 20.0, max_loss=BRL 20.0
+None.
 
 ## Archived experiments
 
-None.
+1 archived.
 
 ## Pending critical-decision approvals (approvals/pending/)
 
@@ -51,6 +51,7 @@ None.
 
 ## Recent decisions (journal/decisions/)
 
+- DEC-20260810-875930
 - DEC-20260810-A032A0
 
 ## Recent system changes (journal/system_changes/)

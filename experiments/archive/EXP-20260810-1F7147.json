@@ -7,7 +7,7 @@
   "max_loss_brl": 20.0,
   "success_metric": "At least 1 paid conversion OR at least 5 qualified inbound leads (explicit interest, reply, or booking) within 14 days of launch.",
   "kill_condition": "Fewer than 2 qualified signals within 14 days despite the test budget being fully spent.",
-  "status": "planned",
+  "status": "killed",
   "policy_issues": [],
   "cash_flows": [],
   "revisions": [
@@ -17,5 +17,10 @@
       "revised_plan": "Point the small paid test at a minimal, standalone offer page (not the blog) -- e.g. a single Carrd/Notion/one-pager page or a direct booking link (Calendly-style) describing one fixed-price service, plus a short paid post/ad on a channel with existing professional reach (e.g. LinkedIn). This keeps the experiment capital-light and fast to launch without depending on the blog's completion, and still tests the real question: does the underlying offer generate paid interest, independent of which page hosts it.",
       "still_open": "Exact page tool and ad channel not yet chosen -- this is an execution detail for whoever builds the experiment, not a strategic decision requiring further capital-allocation analysis."
     }
-  ]
+  ],
+  "kill": {
+    "date": "2026-08-10T12:20:00-03:00",
+    "reason": "Mandate-fit failure, not market failure: never launched, never tested against the market. Killed because the human owner clarified the goal is minimal personal intervention in the money-multiplication process, and this experiment's underlying offer was a personally-delivered consulting service -- the human would have had to actually do the consulting work, which is a much larger and more open-ended form of intervention than the custody-invariant minimum (financial execution, critical-decision approval). See journal/decisions/DEC-20260810-A032A0's successor decision for the corrected direction.",
+    "distinguish_from_demand_failure": "This is not evidence the offer would have failed commercially -- no ad ran, no page existed, no signal was collected. Do not treat this as 'consulting offers don't work'; treat it as 'this project should not be built around ongoing personal service delivery,' a scope constraint, not a market finding."
+  }
 }
