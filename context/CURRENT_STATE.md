@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T15:50:25-03:00
+- Generated at: 2026-08-10T15:51:13-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -46,7 +46,7 @@ None.
 
 ## Pending critical-decision approvals (approvals/pending/)
 
-None.
+- APR-20260810-FDD418 — see `approvals/pending/APR-20260810-FDD418.md`
 
 ## Recent decisions (journal/decisions/)
 
