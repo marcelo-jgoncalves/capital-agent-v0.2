@@ -20,6 +20,27 @@ its state from `state/`:
 python src/scheduler.py run
 ```
 
+### Live on this machine (Windows Task Scheduler)
+
+A scheduled task named `CapitalAgentScheduler` runs `scripts/run_scheduler.ps1`
+(a thin wrapper that calls `python src/scheduler.py run` and appends output to
+`state/scheduler_run.log`, gitignored) every 15 minutes, registered
+2026-08-10. Inspect or manage it with:
+
+```powershell
+Get-ScheduledTask -TaskName "CapitalAgentScheduler"
+Get-ScheduledTaskInfo -TaskName "CapitalAgentScheduler"
+Get-Content .\state\scheduler_run.log -Tail 30
+Disable-ScheduledTask -TaskName "CapitalAgentScheduler"   # pause without deleting
+Unregister-ScheduledTask -TaskName "CapitalAgentScheduler" -Confirm:$false  # remove
+```
+
+This only ever calls `src/scheduler.py run` — it enqueues job tickets and
+never calls an AI, never touches `data/ledger.csv`, and has no path to
+financial execution. If this machine is ever decommissioned or the repository
+moved, re-register the task pointing at the new path (the hardcoded paths are
+in `scripts/run_scheduler.ps1`).
+
 This performs deterministic checks only — no AI/model call happens inside
 this script. It:
 

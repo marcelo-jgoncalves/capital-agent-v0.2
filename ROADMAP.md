@@ -40,13 +40,16 @@ and produce auditable decisions and Human Execution Requests without moving real
 - Add paper portfolio.
 - Add commercial-experiment scoring.
 - Add periodic system-quality review.
-- Put the scheduler (`src/scheduler.py`) on an actual external cadence (cron,
-  Task Scheduler, or equivalent) instead of manual invocation.
+- [x] Put the scheduler (`src/scheduler.py`) on an actual external cadence —
+  Windows Task Scheduler, `CapitalAgentScheduler`, every 15 minutes, live
+  since 2026-08-10. See `scheduler/README.md` "Live on this machine."
 
 Exit criterion:
-At least one complete decision cycle from discovery to shadow measurement, one
-validated self-improvement cycle, and the scheduler running unattended for at
-least one full weekly cycle producing correctly queued jobs.
+At least one complete decision cycle from discovery to shadow measurement and
+one validated self-improvement cycle. The scheduler cadence itself is live;
+still needed to fully close this criterion is at least one full weekly cycle
+observed producing correctly queued jobs unattended (in progress, not yet
+observed end to end).
 
 ## Phase 2 — First human-executed experiment
 

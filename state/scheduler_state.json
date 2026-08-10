@@ -1,14 +1,62 @@
 {
   "version": "0.1",
-  "last_run_at": null,
+  "last_run_at": "2026-08-10T11:35:26-03:00",
   "last_frequency_run": {
-    "frequent": null,
-    "daily": null,
-    "weekly": null,
-    "monthly": null,
-    "quarterly": null
+    "frequent": "2026-08-10T11:34:07-03:00",
+    "daily": "2026-08-10T11:34:07-03:00",
+    "weekly": "2026-08-10T11:34:07-03:00",
+    "monthly": "2026-08-10T11:34:07-03:00",
+    "quarterly": "2026-08-10T11:34:07-03:00"
   },
-  "last_trigger_check_at": null,
-  "run_history": [],
-  "_snapshot": {}
+  "last_trigger_check_at": "2026-08-10T11:35:26-03:00",
+  "run_history": [
+    {
+      "at": "2026-08-10T11:34:07-03:00",
+      "due_frequencies": [
+        "frequent",
+        "daily",
+        "weekly",
+        "monthly",
+        "quarterly"
+      ],
+      "fired_triggers": [],
+      "jobs_queued": [
+        "JOB-20260810-3ED849",
+        "JOB-20260810-9B00A1",
+        "JOB-20260810-DA0E8B",
+        "JOB-20260810-413DDB",
+        "JOB-20260810-816E4D",
+        "JOB-20260810-1E8E29",
+        "JOB-20260810-750E22",
+        "JOB-20260810-F6DA86",
+        "JOB-20260810-59A3C4",
+        "JOB-20260810-DECB5A",
+        "JOB-20260810-44560F",
+        "JOB-20260810-7DBECA",
+        "JOB-20260810-BC0123",
+        "JOB-20260810-74A637",
+        "JOB-20260810-889E70",
+        "JOB-20260810-08A7CD",
+        "JOB-20260810-890FF1",
+        "JOB-20260810-A25C04"
+      ]
+    },
+    {
+      "at": "2026-08-10T11:34:49-03:00",
+      "due_frequencies": [],
+      "fired_triggers": [],
+      "jobs_queued": []
+    },
+    {
+      "at": "2026-08-10T11:35:26-03:00",
+      "due_frequencies": [],
+      "fired_triggers": [],
+      "jobs_queued": []
+    }
+  ],
+  "_snapshot": {
+    "ledger_rows": 1,
+    "completed_execution_requests": 1,
+    "pending_approvals": 0
+  }
 }

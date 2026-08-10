@@ -30,5 +30,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-8E8A9C.md"
+  },
+  {
+    "id": "SYS-20260810-C894F1",
+    "date": "2026-08-10T11:36:28-03:00",
+    "title": "Register CapitalAgentScheduler in Windows Task Scheduler",
+    "class": "A",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260810-C894F1.md"
   }
 ]

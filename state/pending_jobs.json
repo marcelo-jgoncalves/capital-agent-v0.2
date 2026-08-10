@@ -1,1 +1,164 @@
-[]
+[
+  {
+    "id": "JOB-20260810-3ED849",
+    "job_key": "frequent:data_collection",
+    "kind": "scheduled",
+    "requires_ai_reasoning": false,
+    "context_hint": "Scheduled 'frequent' job 'data_collection' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-9B00A1",
+    "job_key": "frequent:trigger_checks",
+    "kind": "scheduled",
+    "requires_ai_reasoning": false,
+    "context_hint": "Scheduled 'frequent' job 'trigger_checks' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-DA0E8B",
+    "job_key": "frequent:health_check",
+    "kind": "scheduled",
+    "requires_ai_reasoning": false,
+    "context_hint": "Scheduled 'frequent' job 'health_check' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-413DDB",
+    "job_key": "daily:portfolio_reconciliation",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'daily' job 'portfolio_reconciliation' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-816E4D",
+    "job_key": "daily:active_experiment_monitoring",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'daily' job 'active_experiment_monitoring' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-1E8E29",
+    "job_key": "daily:opportunity_monitoring",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'daily' job 'opportunity_monitoring' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-750E22",
+    "job_key": "daily:risk_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'daily' job 'risk_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-F6DA86",
+    "job_key": "weekly:capital_allocation_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'weekly' job 'capital_allocation_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-59A3C4",
+    "job_key": "weekly:opportunity_ranking",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'weekly' job 'opportunity_ranking' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-DECB5A",
+    "job_key": "weekly:thesis_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'weekly' job 'thesis_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-44560F",
+    "job_key": "monthly:system_audit",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'monthly' job 'system_audit' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-7DBECA",
+    "job_key": "monthly:calibration",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'monthly' job 'calibration' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-BC0123",
+    "job_key": "monthly:benchmark_comparison",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'monthly' job 'benchmark_comparison' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-74A637",
+    "job_key": "monthly:recurring_error_analysis",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'monthly' job 'recurring_error_analysis' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-889E70",
+    "job_key": "monthly:system_improvement_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'monthly' job 'system_improvement_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-08A7CD",
+    "job_key": "quarterly:architecture_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'quarterly' job 'architecture_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-890FF1",
+    "job_key": "quarterly:strategy_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'quarterly' job 'strategy_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-A25C04",
+    "job_key": "quarterly:governance_review",
+    "kind": "scheduled",
+    "requires_ai_reasoning": true,
+    "context_hint": "Scheduled 'quarterly' job 'governance_review' is due.",
+    "queued_at": "2026-08-10T11:34:07-03:00",
+    "status": "queued"
+  }
+]
