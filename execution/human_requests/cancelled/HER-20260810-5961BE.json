@@ -18,7 +18,11 @@
   "criticality_reasons": [
     "live amount exceeds non-critical threshold"
   ],
-  "status": "pending",
+  "status": "cancelled",
   "instructions": "Execute this operation manually on the appropriate financial platform using your own credentials. The Capital Agent has no capability to execute it. Report the actual result with `confirm-execution`, or `cancel-execution` / `expire-execution` if it will not be executed.",
-  "confirmation": null
+  "confirmation": null,
+  "cancellation": {
+    "cancelled_at": "2026-08-10T15:43:06-03:00",
+    "reason": "Tesouro Selic minimum purchase lot is BRL 196.64, above the current BRL 100 (10% of equity) single-allocation cap. Cannot be executed as requested. Superseded by a policy proposal to differentiate reserve-instrument allocation limits from risky-market-position limits, pending human approval."
+  }
 }

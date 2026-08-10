@@ -30,5 +30,15 @@
     "date": "2026-08-10T12:29:18-03:00",
     "status": "APPROVED",
     "path": "approvals/pending/APR-20260810-3DA546.md"
+  },
+  {
+    "id": "APR-20260810-3DF0B2",
+    "date": "2026-08-10T15:43:39-03:00",
+    "title": "Add a differentiated allocation cap for low-risk reserve instruments (e.g. Tesouro Selic)",
+    "category": "policy-change",
+    "amount_brl": 0.0,
+    "max_loss_brl": 0.0,
+    "status": "PENDING",
+    "path": "approvals/pending/APR-20260810-3DF0B2.md"
   }
 ]

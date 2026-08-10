@@ -7,5 +7,11 @@
     "max_total_capital_brl": 100.0,
     "status": "pending",
     "path": "execution/human_requests/pending/HER-20260810-5961BE.json"
+  },
+  {
+    "id": "HER-20260810-5961BE",
+    "date": "2026-08-10T15:43:06-03:00",
+    "status": "cancelled",
+    "path": "execution/human_requests/cancelled/HER-20260810-5961BE.json"
   }
 ]
