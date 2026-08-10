@@ -17,5 +17,7 @@
   "require_rollback_plan_for_class_b": true,
   "require_tests_for_code_changes": true,
   "authority_expansion_must_be_separate_decision": true,
-  "same_decision_policy_relaxation_prohibited": true
+  "same_decision_policy_relaxation_prohibited": true,
+  "custody_invariant_is_class_d_absolute": true,
+  "custody_invariant_relaxation_requires_dedicated_critical_governance_decision": true
 }

@@ -14,14 +14,18 @@ AI operator does not have to rediscover them from scratch.
 
 ## Entries
 
-### What execution adapter(s) should Phase 3 target first?
-- Raised: 2026-08-10 (repository initialization / Context Management System setup)
-- Why it matters: `ARCHITECTURE.md` lists execution adapters as a future component
-  but none exists yet; the choice affects which broker/exchange API integration
-  and Gate H4 approval package gets prepared first.
+### What read-only financial data adapter(s) should Phase 3 target first?
+- Raised: 2026-08-10 (repository initialization / Context Management System setup); revised 2026-08-10 (custody invariant formalization — see `journal/system_changes/` for the change that removed write-capable execution adapters from the architecture entirely).
+- Why it matters: `ARCHITECTURE.md` lists read-only financial data adapters as a
+  future component (balances/positions/statements/order history, for
+  reconciliation against human-reported Human Execution Request confirmations)
+  but none exists yet; the choice affects which read-only integration and Gate
+  H4 approval package gets prepared first. This is no longer about a write
+  adapter — none may ever exist under this architecture.
 - What would resolve it: completion of Phase 1 opportunity research showing which
   category of opportunity (listed assets, crypto, commercial experiment, etc.)
-  has the strongest evidence.
+  has the strongest evidence, which determines which platform's read-only API
+  is worth integrating first.
 
 ### How should the equity high-water mark be tracked for drawdown calculation?
 - Raised: 2026-08-10 (building `context/CURRENT_STATE.md` generation)

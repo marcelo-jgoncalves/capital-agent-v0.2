@@ -1,0 +1,18 @@
+{
+  "version": "0.1",
+  "note": "Each trigger names a deterministic check the scheduler runs before ever calling an AI. See ARCHITECTURE.md 'Event-driven triggers' and scheduler/README.md.",
+  "triggers": [
+    {"id": "drawdown_threshold_reached", "check": "deterministic: compare current equity floor against hard_drawdown_freeze_pct in config/policy.json", "requires_ai_reasoning": true},
+    {"id": "experiment_deadline_reached", "check": "deterministic: compare experiments/active/*.json against their review/kill conditions", "requires_ai_reasoning": true},
+    {"id": "experiment_success_threshold_reached", "check": "deterministic: compare experiment cash_flows/success_metric against its declared threshold", "requires_ai_reasoning": true},
+    {"id": "experiment_failure_threshold_reached", "check": "deterministic: compare experiment cash_flows/kill_condition against its declared threshold", "requires_ai_reasoning": true},
+    {"id": "new_revenue_detected", "check": "deterministic: new revenue-type row appended to data/ledger.csv since last scheduler run", "requires_ai_reasoning": false},
+    {"id": "material_market_event_detected", "check": "requires a read-only market data feed; not yet implemented", "requires_ai_reasoning": true},
+    {"id": "material_company_event_detected", "check": "requires a read-only data feed; not yet implemented", "requires_ai_reasoning": true},
+    {"id": "human_execution_confirmation_received", "check": "deterministic: a file moved into execution/human_requests/completed/ since last scheduler run", "requires_ai_reasoning": false},
+    {"id": "three_similar_failures_detected", "check": "deterministic: three or more entries in context/knowledge/recurring-errors.md citing the same pattern", "requires_ai_reasoning": true},
+    {"id": "policy_anomaly_detected", "check": "deterministic: config/policy.json fails its own internal consistency checks (see policy_check_proposal in src/capital_agent.py)", "requires_ai_reasoning": true},
+    {"id": "context_inconsistency_detected", "check": "requires a consistency-audit pass; not yet implemented", "requires_ai_reasoning": true},
+    {"id": "critical_decision_generated", "check": "deterministic: a new file appeared under approvals/pending/ since last scheduler run", "requires_ai_reasoning": false}
+  ]
+}

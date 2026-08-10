@@ -21,9 +21,35 @@ ARCHIVE_EXPERIMENTS_DIR = ROOT / "experiments" / "archive"
 SYSTEM_GOVERNANCE_FILE = ROOT / "config" / "system_governance.json"
 SYSTEM_CHANGES_DIR = ROOT / "journal" / "system_changes"
 APPROVALS_DIR = ROOT / "approvals"
+APPROVALS_ARCHIVE_DIR = ROOT / "approvals" / "archive"
 CONTEXT_DIR = ROOT / "context"
 CURRENT_STATE_FILE = CONTEXT_DIR / "CURRENT_STATE.md"
 INDEXES_DIR = CONTEXT_DIR / "indexes"
+
+EXECUTION_DIR = ROOT / "execution"
+HUMAN_REQUESTS_DIR = EXECUTION_DIR / "human_requests"
+HR_PENDING_DIR = HUMAN_REQUESTS_DIR / "pending"
+HR_COMPLETED_DIR = HUMAN_REQUESTS_DIR / "completed"
+HR_EXPIRED_DIR = HUMAN_REQUESTS_DIR / "expired"
+HR_CANCELLED_DIR = HUMAN_REQUESTS_DIR / "cancelled"
+
+STATE_DIR = ROOT / "state"
+SCHEDULER_STATE_FILE = STATE_DIR / "scheduler_state.json"
+PENDING_JOBS_FILE = STATE_DIR / "pending_jobs.json"
+
+# Custody invariant: the Capital Agent must never hold or exercise financial
+# write authority. This is enforced in code, not just in prose, so a corrupted
+# or maliciously edited config cannot silently flip it. See
+# AI_OPERATING_MANUAL.md "Custody invariant" and SYSTEM_EVOLUTION.md Class D.
+CUSTODY_INVARIANT_ERROR = (
+    "Custody invariant violated: config/policy.json sets "
+    "autonomous_financial_execution_permitted=true. This is a hard invariant "
+    "that cannot be relaxed by editing configuration. See "
+    "AI_OPERATING_MANUAL.md 'Custody invariant' and CRITICAL_DECISIONS.md."
+)
+
+ALLOWED_EXECUTION_ACTIONS = {"BUY", "SELL", "TRANSFER", "WITHDRAWAL", "PAYMENT", "OTHER"}
+ACTIONS_REQUIRING_HUMAN_CONTROLLED_DESTINATION = {"TRANSFER", "WITHDRAWAL"}
 
 
 def now_iso() -> str:
@@ -49,7 +75,10 @@ def append_index(index_name: str, entry: dict) -> None:
 
 
 def load_policy() -> dict:
-    return json.loads(POLICY_FILE.read_text(encoding="utf-8"))
+    policy = json.loads(POLICY_FILE.read_text(encoding="utf-8"))
+    if policy.get("autonomous_financial_execution_permitted", False):
+        raise RuntimeError(CUSTODY_INVARIANT_ERROR)
+    return policy
 
 
 def load_critical_policy() -> dict:
@@ -141,6 +170,7 @@ def cmd_status(_args):
         "currency": policy["currency"],
         "execution_tier": policy["execution_tier"],
         "live_execution_enabled": policy["live_execution_enabled"],
+        "autonomous_financial_execution_permitted": policy["autonomous_financial_execution_permitted"],
         "ledger_entries": len(ledger),
         "verified_cash_brl": cash_balance(),
         "verified_equity_floor_brl": current_equity_floor(),
@@ -297,7 +327,13 @@ def cmd_propose_system_change(args):
     if change_class not in allowed_classes | human_classes | prohibited_classes:
         raise SystemExit(f"unknown system change class: {change_class}")
 
-    if change_class in prohibited_classes:
+    # Custody invariant: no self-proposed change may grant autonomous financial
+    # write authority, regardless of the class the proposer requested. This
+    # cannot be bypassed by asking for class A/B/C instead of D.
+    if args.enables_autonomous_financial_execution:
+        change_class = "D"
+        status = "REJECTED_PROHIBITED"
+    elif change_class in prohibited_classes:
         status = "REJECTED_PROHIBITED"
     elif change_class in human_classes:
         status = "PROPOSED_HUMAN_APPROVAL_REQUIRED"
@@ -349,6 +385,232 @@ def cmd_request_approval(args):
     })
     print(json.dumps({"approval_id": approval_id, "status": "PENDING", "path": str(path), "criticality_reasons": reasons}, indent=2))
 
+def _approval_decision(approval_id: str) -> str:
+    """Return APPROVED / REJECTED / PENDING / UNKNOWN by reading the approval
+    record's 'Human decision' section. Checks both pending and archive so an
+    approval that was moved after a human decision is still found."""
+    for directory in (APPROVALS_PENDING_DIR, APPROVALS_ARCHIVE_DIR):
+        path = directory / f"{approval_id}.md"
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            marker = "## Human decision"
+            idx = text.find(marker)
+            if idx == -1:
+                return "UNKNOWN"
+            after = text[idx + len(marker):].strip()
+            first_line = after.splitlines()[0].strip() if after else ""
+            if first_line.upper().startswith("APPROVED"):
+                return "APPROVED"
+            if first_line.upper().startswith("REJECTED"):
+                return "REJECTED"
+            return "PENDING"
+    return "UNKNOWN"
+
+
+def cmd_request_execution(args):
+    action = args.action.upper()
+    if action not in ALLOWED_EXECUTION_ACTIONS:
+        raise SystemExit(f"unsupported execution action: {action}. Allowed: {sorted(ALLOWED_EXECUTION_ACTIONS)}")
+    if action in ACTIONS_REQUIRING_HUMAN_CONTROLLED_DESTINATION and not args.destination_controlled_by_human:
+        raise SystemExit(
+            "refused: TRANSFER/WITHDRAWAL requires --destination-controlled-by-human "
+            "(INVESTMENT_POLICY.md section 3: no withdrawals to destinations not "
+            "controlled by the human owner)."
+        )
+
+    issues = policy_check_proposal(args.max_total_capital)
+    if issues:
+        raise SystemExit("refused: policy check failed: " + "; ".join(issues))
+
+    critical, reasons = classify_critical(
+        amount=args.max_total_capital, max_loss=args.max_loss,
+        recurring=args.recurring, new_business_model=args.new_business_model,
+        external_obligations=args.external_obligations,
+        legal_uncertainty=args.legal_uncertainty,
+        public_representation=args.public_representation,
+        new_financial_write_access=args.new_financial_write_access,
+        policy_relaxation=args.policy_relaxation,
+    )
+    if critical:
+        if not args.approval_id:
+            raise SystemExit(
+                "refused: this execution is classified critical "
+                f"({'; '.join(reasons)}) and requires an approved "
+                "approvals/pending (or archived) record. Pass --approval-id "
+                "after the human authorizes it via `request-approval`."
+            )
+        decision = _approval_decision(args.approval_id)
+        if decision != "APPROVED":
+            raise SystemExit(
+                f"refused: approval {args.approval_id} is not APPROVED "
+                f"(current human decision: {decision}). Critical-decision "
+                "authorization and financial execution are separate events; "
+                "authorization must exist first."
+            )
+
+    request_id = f"HER-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    HR_PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    data = {
+        "id": request_id,
+        "created_at": now_iso(),
+        "decision_id": args.decision_id,
+        "approval_id": args.approval_id,
+        "action": action,
+        "asset": args.asset,
+        "quantity": args.quantity,
+        "max_price": args.max_price,
+        "max_total_capital": round(args.max_total_capital, 2),
+        "valid_until": args.valid_until,
+        "reason": args.reason,
+        "expected_upside": args.expected_upside,
+        "maximum_plausible_loss": round(args.max_loss, 2),
+        "critic_assessment": args.critic_assessment,
+        "policy_status": "PASSED",
+        "critical_decision": critical,
+        "criticality_reasons": reasons,
+        "status": "pending",
+        "instructions": (
+            "Execute this operation manually on the appropriate financial "
+            "platform using your own credentials. The Capital Agent has no "
+            "capability to execute it. Report the actual result with "
+            "`confirm-execution`, or `cancel-execution` / `expire-execution` "
+            "if it will not be executed."
+        ),
+        "confirmation": None,
+    }
+    path = HR_PENDING_DIR / f"{request_id}.json"
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    append_index("execution_requests", {
+        "id": request_id,
+        "created_at": data["created_at"],
+        "action": action,
+        "asset": args.asset,
+        "max_total_capital_brl": data["max_total_capital"],
+        "status": "pending",
+        "path": f"execution/human_requests/pending/{request_id}.json",
+    })
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _find_pending_request(request_id: str) -> Path:
+    path = HR_PENDING_DIR / f"{request_id}.json"
+    if not path.exists():
+        raise SystemExit(f"no pending human execution request: {request_id}")
+    return path
+
+
+def cmd_confirm_execution(args):
+    path = _find_pending_request(args.id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    executed_total = round(args.executed_quantity * args.executed_price + args.fees, 2)
+    action = data["action"]
+    if action == "BUY":
+        ledger_type = "buy"
+    elif action == "SELL":
+        ledger_type = "sell"
+    elif action in {"TRANSFER", "WITHDRAWAL"}:
+        ledger_type = "capital_out"
+    elif action == "PAYMENT":
+        ledger_type = "expense"
+    else:
+        ledger_type = args.ledger_type or "adjustment"
+
+    if ledger_type in {"buy", "expense", "fee", "tax", "capital_out"} and executed_total > cash_balance():
+        raise SystemExit("refused: reported execution would exceed verified cash; investigate before recording")
+
+    confirmation = {
+        "confirmed_at": now_iso(),
+        "executed_quantity": args.executed_quantity,
+        "executed_price": args.executed_price,
+        "fees_brl": round(args.fees, 2),
+        "executed_total_brl": executed_total,
+        "executed_timestamp": args.executed_timestamp or now_iso(),
+        "notes": args.notes,
+    }
+    data["status"] = "completed"
+    data["confirmation"] = confirmation
+
+    append_ledger(
+        ledger_type, args.category or "market", executed_total,
+        f"Human-confirmed execution of {data['id']} ({action} {data.get('asset')})",
+        data["id"],
+    )
+
+    HR_COMPLETED_DIR.mkdir(parents=True, exist_ok=True)
+    (HR_COMPLETED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.unlink()
+    append_index("execution_requests", {
+        "id": data["id"], "date": confirmation["confirmed_at"], "action": action,
+        "asset": data.get("asset"), "executed_total_brl": executed_total,
+        "status": "completed", "path": f"execution/human_requests/completed/{path.name}",
+    })
+    print(json.dumps({"id": data["id"], "status": "completed", "verified_cash_brl": cash_balance()}, indent=2))
+
+
+def cmd_cancel_execution(args):
+    path = _find_pending_request(args.id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["status"] = "cancelled"
+    data["cancellation"] = {"cancelled_at": now_iso(), "reason": args.reason}
+    HR_CANCELLED_DIR.mkdir(parents=True, exist_ok=True)
+    (HR_CANCELLED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.unlink()
+    append_index("execution_requests", {
+        "id": data["id"], "date": data["cancellation"]["cancelled_at"], "status": "cancelled",
+        "path": f"execution/human_requests/cancelled/{path.name}",
+    })
+    print(json.dumps({"id": data["id"], "status": "cancelled"}, indent=2))
+
+
+def cmd_expire_execution(args):
+    path = _find_pending_request(args.id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["status"] = "expired"
+    data["expiration"] = {"expired_at": now_iso(), "reason": args.reason or "validity window passed"}
+    HR_EXPIRED_DIR.mkdir(parents=True, exist_ok=True)
+    (HR_EXPIRED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.unlink()
+    append_index("execution_requests", {
+        "id": data["id"], "date": data["expiration"]["expired_at"], "status": "expired",
+        "path": f"execution/human_requests/expired/{path.name}",
+    })
+    print(json.dumps({"id": data["id"], "status": "expired"}, indent=2))
+
+
+def cmd_sweep_expired_executions(_args):
+    """Deterministic check: move pending requests whose valid_until has passed
+    to expired/. No AI reasoning required for this, per the 'deterministic
+    computation first' principle (ARCHITECTURE.md)."""
+    HR_PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).astimezone()
+    swept = []
+    for path in sorted(HR_PENDING_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        valid_until = data.get("valid_until")
+        if not valid_until:
+            continue
+        try:
+            deadline = datetime.fromisoformat(valid_until)
+        except ValueError:
+            continue
+        if deadline.tzinfo is None:
+            deadline = deadline.astimezone()
+        if now > deadline:
+            data["status"] = "expired"
+            data["expiration"] = {"expired_at": now_iso(), "reason": "validity window passed (automatic sweep)"}
+            HR_EXPIRED_DIR.mkdir(parents=True, exist_ok=True)
+            (HR_EXPIRED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            path.unlink()
+            swept.append(data["id"])
+    print(json.dumps({"expired": swept}, indent=2))
+
+
+def cmd_list_execution_requests(_args):
+    requests = _list_json(HR_PENDING_DIR)
+    print(json.dumps(requests, indent=2, ensure_ascii=False))
+
+
 def _list_json(dir_path: Path) -> list[dict]:
     if not dir_path.exists():
         return []
@@ -378,6 +640,7 @@ def build_current_state() -> str:
     decision_ids = _list_md_ids(DECISIONS_DIR)
     system_change_ids = _list_md_ids(SYSTEM_CHANGES_DIR)
     pending_approval_ids = _list_md_ids(APPROVALS_PENDING_DIR)
+    pending_execution_requests = _list_json(HR_PENDING_DIR)
 
     lines = []
     lines.append("# Current State")
@@ -387,7 +650,8 @@ def build_current_state() -> str:
     lines.append("")
     lines.append(f"- Generated at: {now_iso()}")
     lines.append(f"- Repository/policy version: {policy.get('policy_version', 'unknown')}")
-    lines.append("- Phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)")
+    lines.append("- Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)")
+    lines.append("- Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).")
     lines.append("")
     lines.append("## Capital (verified from data/ledger.csv)")
     lines.append("")
@@ -401,15 +665,28 @@ def build_current_state() -> str:
     lines.append("")
     lines.append("## Execution tier & limits (config/policy.json)")
     lines.append("")
-    lines.append(f"- Execution tier: {policy['execution_tier']}")
-    lines.append(f"- Live execution enabled: {policy['live_execution_enabled']}")
+    lines.append(f"- Execution tier (operating phase): {policy['execution_tier']}")
+    lines.append(f"- Human Execution Requests in active use: {policy['live_execution_enabled']}")
+    lines.append(f"- Autonomous financial execution permitted: {policy['autonomous_financial_execution_permitted']} (hard invariant, always False)")
     lines.append(f"- Max single live allocation: BRL {equity * float(policy['max_single_live_allocation_pct_equity']):.2f}")
     lines.append(f"- Min cash reserve: BRL {equity * float(policy['min_cash_reserve_pct_equity']):.2f}")
     lines.append(f"- Hard drawdown freeze: {float(policy['hard_drawdown_freeze_pct']) * 100:.0f}% of equity")
     lines.append("")
     lines.append("## Positions")
     lines.append("")
-    lines.append("None recorded. Phase 0 has no live execution adapter.")
+    lines.append("None recorded. No financial write adapter exists or ever will under this architecture; positions only change via confirmed Human Execution Requests.")
+    lines.append("")
+    lines.append("## Pending Human Execution Requests (execution/human_requests/pending/)")
+    lines.append("")
+    if pending_execution_requests:
+        for r in pending_execution_requests:
+            lines.append(
+                f"- {r.get('id')}: {r.get('action')} {r.get('asset')} — "
+                f"max_total_capital=BRL {r.get('max_total_capital')}, "
+                f"critical={r.get('critical_decision')}, valid_until={r.get('valid_until')}"
+            )
+    else:
+        lines.append("None. No financial execution is currently waiting on the human owner.")
     lines.append("")
     lines.append("## Active experiments")
     lines.append("")
@@ -449,8 +726,8 @@ def build_current_state() -> str:
     lines.append("")
     lines.append("## Risks")
     lines.append("")
-    lines.append("- No live execution adapter exists yet; Phase 0 caps exposure to zero live risk.")
     lines.append("- No historical equity high-water mark is tracked yet, so drawdown cannot be computed.")
+    lines.append("- No scheduler run history yet; autonomous operation cadence is not yet exercised in production.")
     lines.append("")
     lines.append("## Hypotheses")
     lines.append("")
@@ -529,6 +806,10 @@ def build_parser():
     sc.add_argument("--problem", required=True)
     sc.add_argument("--change", required=True)
     sc.add_argument("--benefit", required=True)
+    sc.add_argument("--enables-autonomous-financial-execution", action="store_true",
+                     help="Must be set truthfully if the change would grant the system "
+                          "any financial write capability. Forces REJECTED_PROHIBITED "
+                          "(Class D) regardless of --class.")
     sc.set_defaults(func=cmd_propose_system_change)
 
 
@@ -561,6 +842,56 @@ def build_parser():
 
     uc = sub.add_parser("update-context")
     uc.set_defaults(func=cmd_update_context)
+
+    re_ = sub.add_parser("request-execution")
+    re_.add_argument("--action", required=True, help="BUY|SELL|TRANSFER|WITHDRAWAL|PAYMENT|OTHER")
+    re_.add_argument("--asset", required=True)
+    re_.add_argument("--quantity", type=float, required=True)
+    re_.add_argument("--max-price", type=float, required=True)
+    re_.add_argument("--max-total-capital", type=float, required=True)
+    re_.add_argument("--valid-until", required=True, help="ISO 8601 timestamp")
+    re_.add_argument("--reason", required=True)
+    re_.add_argument("--expected-upside", required=True)
+    re_.add_argument("--max-loss", type=float, required=True)
+    re_.add_argument("--critic-assessment", required=True)
+    re_.add_argument("--decision-id", default=None)
+    re_.add_argument("--approval-id", default=None)
+    re_.add_argument("--destination-controlled-by-human", action="store_true")
+    re_.add_argument("--recurring", action="store_true")
+    re_.add_argument("--new-business-model", action="store_true")
+    re_.add_argument("--external-obligations", action="store_true")
+    re_.add_argument("--legal-uncertainty", action="store_true")
+    re_.add_argument("--public-representation", action="store_true")
+    re_.add_argument("--new-financial-write-access", action="store_true")
+    re_.add_argument("--policy-relaxation", action="store_true")
+    re_.set_defaults(func=cmd_request_execution)
+
+    ce = sub.add_parser("confirm-execution")
+    ce.add_argument("--id", required=True)
+    ce.add_argument("--executed-quantity", type=float, required=True)
+    ce.add_argument("--executed-price", type=float, required=True)
+    ce.add_argument("--fees", type=float, default=0.0)
+    ce.add_argument("--executed-timestamp", default=None)
+    ce.add_argument("--category", default=None)
+    ce.add_argument("--ledger-type", default=None, help="override for OTHER actions")
+    ce.add_argument("--notes", default="")
+    ce.set_defaults(func=cmd_confirm_execution)
+
+    xe = sub.add_parser("cancel-execution")
+    xe.add_argument("--id", required=True)
+    xe.add_argument("--reason", required=True)
+    xe.set_defaults(func=cmd_cancel_execution)
+
+    ee = sub.add_parser("expire-execution")
+    ee.add_argument("--id", required=True)
+    ee.add_argument("--reason", default=None)
+    ee.set_defaults(func=cmd_expire_execution)
+
+    se = sub.add_parser("sweep-expired-executions")
+    se.set_defaults(func=cmd_sweep_expired_executions)
+
+    le = sub.add_parser("execution-requests")
+    le.set_defaults(func=cmd_list_execution_requests)
 
     return p
 

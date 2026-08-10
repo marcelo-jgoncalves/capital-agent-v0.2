@@ -1,0 +1,14 @@
+{
+  "version": "0.1",
+  "last_run_at": null,
+  "last_frequency_run": {
+    "frequent": null,
+    "daily": null,
+    "weekly": null,
+    "monthly": null,
+    "quarterly": null
+  },
+  "last_trigger_check_at": null,
+  "run_history": [],
+  "_snapshot": {}
+}

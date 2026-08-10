@@ -5,12 +5,15 @@ This file exists for AI tools that automatically discover `AGENTS.md`.
 Read `START_HERE.md` before material work. It routes to the canonical,
 vendor-neutral instructions:
 
-1. `AI_OPERATING_MANUAL.md`
+1. `AI_OPERATING_MANUAL.md` (includes the custody invariant: only the human
+   owner may access, custody or move real money)
 2. `INVESTMENT_POLICY.md`
 3. `HUMAN_GATES.md`
-4. `SYSTEM_EVOLUTION.md`
-5. machine-readable files under `config/`
-6. `context/CURRENT_STATE.md` for current repository state
+4. `CRITICAL_DECISIONS.md`
+5. `SYSTEM_EVOLUTION.md`
+6. `ARCHITECTURE.md`
+7. machine-readable files under `config/`
+8. `context/CURRENT_STATE.md` for current repository state
 
 Read and follow those files before material work.
 

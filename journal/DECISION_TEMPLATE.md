@@ -38,7 +38,13 @@ Include doing nothing / low-risk benchmark.
 
 ## Decision
 
-Reject / Observe / Paper-test / Live-test / Scale / Reduce / Exit
+Reject / Observe / Paper-test / Recommend-for-human-execution / Scale / Reduce / Exit
+
+If this decision requires moving real money, do not execute it — prepare a
+Human Execution Request instead (`execution/human_requests/`,
+`ARCHITECTURE.md`). Link it here once created:
+
+- Human Execution Request ID:
 
 ## Kill condition
 

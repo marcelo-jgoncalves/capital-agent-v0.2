@@ -17,10 +17,12 @@ mission, policy, human gates or critical-decision rules — those remain in
 
 Read every session before material work. Small by design.
 
-- Mission and non-negotiable behavior (`AI_OPERATING_MANUAL.md`).
+- Mission, custody invariant and non-negotiable behavior (`AI_OPERATING_MANUAL.md`).
 - Critical policy limits (`config/policy.json`, `config/critical_decisions.json`).
-- Current patrimony, positions, active experiments, pending approvals, known
-  risks, open hypotheses and next actions (`context/CURRENT_STATE.md`).
+- Current patrimony, positions, active experiments, pending Human Execution
+  Requests, pending approvals, known risks, open hypotheses and next actions
+  (`context/CURRENT_STATE.md`).
+- The scheduler's current job queue (`state/pending_jobs.json`).
 
 ### Warm context
 
@@ -62,9 +64,11 @@ capture -> classify -> persist -> index -> retrieve -> summarize -> consolidate 
    record is always the source of truth; nothing here overrides it.
 4. **Index** — add a compact entry to the matching file under
    `context/indexes/` (`decisions.json`, `experiments.json`, `research.json`,
-   `system-changes.json`, `approvals.json`) so it can be found without scanning
-   every file. `capital_agent.py propose`, `new-experiment`,
-   `propose-system-change` and `request-approval` do this automatically.
+   `system-changes.json`, `approvals.json`, `execution_requests.json`) so it
+   can be found without scanning every file. `capital_agent.py propose`,
+   `new-experiment`, `propose-system-change`, `request-approval` and
+   `request-execution`/`confirm-execution`/`cancel-execution`/
+   `expire-execution` do this automatically.
 5. **Retrieve** — when a task needs warm or cold context, look it up via the
    index rather than reading every file in `journal/`.
 6. **Summarize** — periodically (see `context/summaries/README.md`) roll events
@@ -104,11 +108,13 @@ python src/capital_agent.py update-context
 ```
 
 It reads `config/policy.json`, `data/ledger.csv`, `experiments/active/`,
-`journal/decisions/`, `journal/system_changes/` and `approvals/pending/`
-directly. Values it cannot yet compute from structured sources (e.g. drawdown,
-before an equity high-water-mark mechanism exists) are marked `not yet
-implemented`, never guessed. Regenerate it after any change to those sources;
-do not hand-edit it.
+`journal/decisions/`, `journal/system_changes/`, `approvals/pending/` and
+`execution/human_requests/pending/` directly. Values it cannot yet compute
+from structured sources (e.g. drawdown, before an equity high-water-mark
+mechanism exists) are marked `not yet implemented`, never guessed. Regenerate
+it after any change to those sources; do not hand-edit it. It never reports a
+Human Execution Request as executed based on its own presence — only a
+`completed` request (human-confirmed) is ever described as real.
 
 ## External content
 

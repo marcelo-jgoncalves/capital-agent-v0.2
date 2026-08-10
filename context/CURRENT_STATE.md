@@ -3,9 +3,10 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T10:22:31-03:00
-- Repository/policy version: 0.1
-- Phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
+- Generated at: 2026-08-10T10:51:30-03:00
+- Repository/policy version: 0.2
+- Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
+- Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
 
 ## Capital (verified from data/ledger.csv)
 
@@ -19,15 +20,20 @@ Do not hand-edit; edit the underlying sources (ledger, config, experiments, jour
 
 ## Execution tier & limits (config/policy.json)
 
-- Execution tier: 0
-- Live execution enabled: False
+- Execution tier (operating phase): 0
+- Human Execution Requests in active use: False
+- Autonomous financial execution permitted: False (hard invariant, always False)
 - Max single live allocation: BRL 100.00
 - Min cash reserve: BRL 500.00
 - Hard drawdown freeze: 20% of equity
 
 ## Positions
 
-None recorded. Phase 0 has no live execution adapter.
+None recorded. No financial write adapter exists or ever will under this architecture; positions only change via confirmed Human Execution Requests.
+
+## Pending Human Execution Requests (execution/human_requests/pending/)
+
+None. No financial execution is currently waiting on the human owner.
 
 ## Active experiments
 
@@ -47,12 +53,13 @@ None recorded yet.
 
 ## Recent system changes (journal/system_changes/)
 
+- SYS-20260810-BD6581
 - SYS-20260810-D62661
 
 ## Risks
 
-- No live execution adapter exists yet; Phase 0 caps exposure to zero live risk.
 - No historical equity high-water mark is tracked yet, so drawdown cannot be computed.
+- No scheduler run history yet; autonomous operation cadence is not yet exercised in production.
 
 ## Hypotheses
 

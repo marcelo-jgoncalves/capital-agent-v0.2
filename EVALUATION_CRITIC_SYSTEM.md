@@ -55,4 +55,4 @@ The critic has no transaction authority, cannot approve its own critical decisio
 
 ## Mandatory triggers
 
-Post-mortem after an experiment closes, thesis invalidation, maximum-loss condition, unexpected material outcome, policy breach or execution anomaly. System audit monthly during live operation, after a hard drawdown freeze, after three related failures, and before a material relaxation of risk authority.
+Post-mortem after an experiment closes, thesis invalidation, maximum-loss condition, unexpected material outcome, policy breach or execution anomaly — including whenever a Human Execution Request is confirmed (`execution/human_requests/completed/`) with results materially different from what was requested. System audit monthly during live operation, after a hard drawdown freeze, after three related failures, and before a material relaxation of risk authority or any proposal touching the custody invariant (`AI_OPERATING_MANUAL.md`).

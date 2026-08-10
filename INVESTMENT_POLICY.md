@@ -43,7 +43,14 @@ Until explicitly amended:
 - strategies dependent on violating platform terms;
 - credential sharing in repositories/prompts;
 - withdrawals to destinations not controlled by the human owner;
-- recurring liabilities that can exceed available experiment cash.
+- recurring liabilities that can exceed available experiment cash;
+- any AI, script, scheduler, service, integration or automation holding a
+  financial credential with write authority (buy/sell/transfer/pay/withdraw)
+  or executing a real financial operation without a human physically
+  performing it — the custody invariant in `AI_OPERATING_MANUAL.md` and
+  `HUMAN_GATES.md`. This is absolute and does not admit a "small enough"
+  exception; there is no allocation size below which autonomous financial
+  execution becomes acceptable.
 
 ## 4. Survival constraints
 
@@ -121,7 +128,7 @@ implementation changes do not imply permission to relax this financial policy.
 
 ## 11. Business-model mandate
 
-The agent may investigate and propose any lawful business model with a plausible economic mechanism for increasing experiment equity. No fixed list is exhaustive. Legal eligibility does not imply autonomous execution: criticality, liability, security, reversibility, taxation/regulation and identity requirements still apply.
+The agent may investigate and propose any lawful business model with a plausible economic mechanism for increasing experiment equity — not limited to listed securities. Examples: software, micro-SaaS, APIs, automations, digital products, data/content products, e-commerce and resale, marketplaces, services, lead generation, paid advertising, affiliate programs, licensing, legal arbitrage, revenue-generating infrastructure, and lawful models discovered later. No fixed list is exhaustive. Legal eligibility does not imply autonomous financial execution: criticality, liability, security, reversibility, taxation/regulation and identity requirements still apply, and any real money movement is human-executed per the custody invariant (`AI_OPERATING_MANUAL.md`).
 
 ## 12. Critical-decision authorization
 

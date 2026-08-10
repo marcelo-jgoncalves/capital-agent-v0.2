@@ -8,6 +8,13 @@ Version: 0.2
 
 The system may research, simulate, draft, code, test and prepare a critical decision autonomously. Execution remains blocked until a bounded approval is recorded. Silence, previous broad authorization, the mission to maximize capital, or approval for a similar action does not count as approval. If classification is uncertain, default to **critical**.
 
+Authorization of a critical decision is a separate event from financial
+execution. If the authorized decision involves moving real money, approval
+unblocks the creation of a Human Execution Request
+(`execution/human_requests/`, `ARCHITECTURE.md`); it does not itself execute
+anything. Only the human owner's confirmed execution updates the ledger — see
+the custody invariant in `AI_OPERATING_MANUAL.md`.
+
 ## Critical triggers
 
 A decision is critical if ANY trigger applies.
@@ -40,11 +47,25 @@ A decision is critical if ANY trigger applies.
 - creating a public brand/account that represents the owner;
 - making guarantees, endorsements or claims that can create liability.
 
+### Custody invariant (always critical, and structurally prohibited beyond that)
+- creating, requesting or using credentials with write authority over funds;
+- enabling any component (AI, script, scheduler, service, integration, MCP,
+  API) with write authority to buy, sell, transfer, pay or withdraw real
+  money;
+- promoting a read-only financial credential to write access.
+
+These are not merely critical decisions requiring approval like the others in
+this document — they are prohibited outright under the custody invariant
+(`AI_OPERATING_MANUAL.md`, `SYSTEM_EVOLUTION.md` Class D) and cannot be
+authorized by a routine critical-decision approval package. A genuine future
+proposal to change the custody invariant itself is necessarily a dedicated
+critical governance decision, not a normal item on this list, and remains
+subject to `HUMAN_GATES.md` even if authorized.
+
 ### Security / access
-- creating credentials with write authority over funds;
-- enabling a new live execution adapter;
+- enabling a new read-only financial data adapter for the first time;
 - increasing API privileges;
-- connecting write-capable automation to sensitive/financial systems;
+- connecting automation to sensitive/financial systems, even read-only;
 - changing secret-management architecture in a way that expands access.
 
 ### System governance
@@ -76,4 +97,13 @@ Approval is limited to the described action, amount, counterparty, duration and 
 
 ## Emergency risk-reduction exception
 
-The system may autonomously reduce an already-existing exposure without waiting for approval only when the action cannot increase exposure, creates no new obligation, is already permitted by the active execution adapter and is logged immediately. Otherwise, human approval is required.
+The system may autonomously *decide and record* that an already-existing
+exposure should be reduced without waiting for the usual critical-decision
+approval package, when the action cannot increase exposure and creates no new
+obligation — but this exception affects how fast a risk-reducing
+recommendation is prepared, not who executes it. The custody invariant is not
+suspended by an emergency: if reducing the exposure involves moving real
+money, the system still only produces a Human Execution Request, and the
+human still executes it. What the exception waives is deliberation time on the
+recommendation, not the requirement for human execution. Log the reasoning
+immediately either way.

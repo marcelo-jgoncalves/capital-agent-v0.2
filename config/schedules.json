@@ -1,0 +1,31 @@
+{
+  "version": "0.1",
+  "note": "Frequencies describe how often a job category is due, not what AI provider runs it. See ARCHITECTURE.md 'Scheduler and orchestration' and scheduler/README.md.",
+  "frequencies": {
+    "frequent": {
+      "interval_minutes": 15,
+      "jobs": ["data_collection", "trigger_checks", "health_check"],
+      "requires_ai_reasoning": false
+    },
+    "daily": {
+      "interval_minutes": 1440,
+      "jobs": ["portfolio_reconciliation", "active_experiment_monitoring", "opportunity_monitoring", "risk_review"],
+      "requires_ai_reasoning": true
+    },
+    "weekly": {
+      "interval_minutes": 10080,
+      "jobs": ["capital_allocation_review", "opportunity_ranking", "thesis_review"],
+      "requires_ai_reasoning": true
+    },
+    "monthly": {
+      "interval_minutes": 43200,
+      "jobs": ["system_audit", "calibration", "benchmark_comparison", "recurring_error_analysis", "system_improvement_review"],
+      "requires_ai_reasoning": true
+    },
+    "quarterly": {
+      "interval_minutes": 129600,
+      "jobs": ["architecture_review", "strategy_review", "governance_review"],
+      "requires_ai_reasoning": true
+    }
+  }
+}

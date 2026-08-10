@@ -6,5 +6,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-D62661.md"
+  },
+  {
+    "id": "SYS-20260810-BD6581",
+    "date": "2026-08-10T10:50:48-03:00",
+    "title": "Custody invariant, Human Execution Request lifecycle, scheduler/orchestration and AI Provider Adapter abstraction",
+    "class": "B",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260810-BD6581.md"
   }
 ]
