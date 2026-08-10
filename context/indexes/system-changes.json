@@ -38,5 +38,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-C894F1.md"
+  },
+  {
+    "id": "SYS-20260810-C76D60",
+    "date": "2026-08-10T11:51:03-03:00",
+    "title": "Add Yahoo Finance MCP as first read-only financial data adapter",
+    "class": "A",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260810-C76D60.md"
   }
 ]

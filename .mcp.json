@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "yahoo-finance": {
+      "command": "npx",
+      "args": ["-y", "yahoo-finance-mcp-server"],
+      "description": "Read-only market data (quotes, historical prices, fundamentals, analyst ratings, news) via Yahoo Finance / yfinance. No API key. Approved as the first read-only financial data adapter under Gate H4 (HUMAN_GATES.md); see approvals/pending/APR-20260810-7BFB0C.md. Never treat its output as authority for a material decision without cross-checking; it has no write/trading capability and none should ever be added to it."
+    }
+  }
+}

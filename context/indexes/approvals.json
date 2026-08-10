@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "id": "APR-20260810-7BFB0C",
+    "date": "2026-08-10T11:49:11-03:00",
+    "title": "Enable Yahoo Finance MCP server (read-only market data)",
+    "category": "data-adapter",
+    "amount_brl": 0.0,
+    "max_loss_brl": 0.0,
+    "status": "PENDING",
+    "path": "approvals/pending/APR-20260810-7BFB0C.md"
+  },
+  {
+    "id": "APR-20260810-7BFB0C",
+    "date": "2026-08-10T11:49:38-03:00",
+    "status": "APPROVED",
+    "path": "approvals/pending/APR-20260810-7BFB0C.md"
+  }
+]

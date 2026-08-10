@@ -13,5 +13,6 @@
   "public_representation_of_owner_is_always_critical": true,
   "new_write_financial_credentials_are_always_critical": true,
   "policy_relaxation_is_always_critical": true,
-  "critical_policy_change_is_always_critical": true
+  "critical_policy_change_is_always_critical": true,
+  "new_readonly_financial_adapter_is_always_critical": true
 }

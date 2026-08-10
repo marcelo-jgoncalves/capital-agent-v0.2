@@ -69,3 +69,18 @@ AI operator does not have to rediscover them from scratch.
   approval the AI never has the key for, or an approval channel entirely
   outside the repository. Revisit this decision if the operating machine ever
   gains additional users/access.
+
+### Does the Yahoo Finance MCP actually work end to end on this machine?
+- Raised: 2026-08-10 (`SYS-20260810-C76D60`, `.mcp.json` added, human-approved
+  via `APR-20260810-7BFB0C`).
+- Why it matters: `.mcp.json` was configured mid-session, so the tool is not
+  callable until the next Claude Code session reconnects. The npm package
+  (`yahoo-finance-mcp-server`) shells out to a local Python `yfinance`
+  runtime that was not separately confirmed installed on this machine
+  (only that Python 3.12 itself is present).
+- What would resolve it: in the next session, call one of its tools (e.g. a
+  quote lookup) and confirm it returns real data rather than an error. If it
+  fails due to a missing `yfinance` install, that is a `pip install yfinance`
+  fix, not a governance issue — but should be logged either way (a
+  post-mortem if it silently failed for a while, or just closing this
+  question if it works cleanly).

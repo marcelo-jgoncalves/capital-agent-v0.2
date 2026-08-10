@@ -1,14 +1,14 @@
 {
   "version": "0.1",
-  "last_run_at": "2026-08-10T11:35:26-03:00",
+  "last_run_at": "2026-08-10T11:50:16-03:00",
   "last_frequency_run": {
-    "frequent": "2026-08-10T11:34:07-03:00",
+    "frequent": "2026-08-10T11:50:16-03:00",
     "daily": "2026-08-10T11:34:07-03:00",
     "weekly": "2026-08-10T11:34:07-03:00",
     "monthly": "2026-08-10T11:34:07-03:00",
     "quarterly": "2026-08-10T11:34:07-03:00"
   },
-  "last_trigger_check_at": "2026-08-10T11:35:26-03:00",
+  "last_trigger_check_at": "2026-08-10T11:50:16-03:00",
   "run_history": [
     {
       "at": "2026-08-10T11:34:07-03:00",
@@ -52,11 +52,23 @@
       "due_frequencies": [],
       "fired_triggers": [],
       "jobs_queued": []
+    },
+    {
+      "at": "2026-08-10T11:50:16-03:00",
+      "due_frequencies": [
+        "frequent"
+      ],
+      "fired_triggers": [
+        "critical_decision_generated"
+      ],
+      "jobs_queued": [
+        "JOB-20260810-D66C67"
+      ]
     }
   ],
   "_snapshot": {
     "ledger_rows": 1,
     "completed_execution_requests": 1,
-    "pending_approvals": 0
+    "pending_approvals": 1
   }
 }

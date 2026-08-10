@@ -160,5 +160,14 @@
     "context_hint": "Scheduled 'quarterly' job 'governance_review' is due.",
     "queued_at": "2026-08-10T11:34:07-03:00",
     "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-D66C67",
+    "job_key": "trigger:critical_decision_generated:2026-08-10T11:50:16-03:00",
+    "kind": "trigger",
+    "requires_ai_reasoning": true,
+    "context_hint": "Trigger 'critical_decision_generated' fired: 1 new pending approval(s)",
+    "queued_at": "2026-08-10T11:50:16-03:00",
+    "status": "queued"
   }
 ]

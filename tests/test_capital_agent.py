@@ -53,6 +53,11 @@ class CapitalAgentTests(unittest.TestCase):
         self.assertTrue(critical)
         self.assertTrue(any("policy relaxation" in x for x in reasons))
 
+    def test_new_readonly_financial_adapter_is_critical(self):
+        critical, reasons = ca.classify_critical(new_readonly_financial_adapter=True)
+        self.assertTrue(critical)
+        self.assertTrue(any("read-only financial data adapter" in x for x in reasons))
+
 
 class ContextManagementTests(unittest.TestCase):
     def test_build_current_state_reflects_verified_cash(self):

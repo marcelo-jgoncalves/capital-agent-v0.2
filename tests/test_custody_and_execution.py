@@ -66,6 +66,7 @@ CRITICAL_POLICY = {
     "new_write_financial_credentials_are_always_critical": True,
     "policy_relaxation_is_always_critical": True,
     "critical_policy_change_is_always_critical": True,
+    "new_readonly_financial_adapter_is_always_critical": True,
 }
 
 GOVERNANCE = {
@@ -276,6 +277,7 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
                 recurring=False, new_business_model=False, external_obligations=False,
                 legal_uncertainty=False, public_representation=False,
                 new_financial_write_access=False, policy_relaxation=False,
+                new_readonly_financial_adapter=False,
             )
             with patch("builtins.print"):
                 ca.cmd_request_approval(approval_args)
@@ -292,6 +294,7 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
                 recurring=False, new_business_model=False, external_obligations=False,
                 legal_uncertainty=False, public_representation=False,
                 new_financial_write_access=False, policy_relaxation=False,
+                new_readonly_financial_adapter=False,
             )
             with patch("builtins.print"):
                 ca.cmd_request_approval(approval_args)
@@ -386,6 +389,7 @@ class ApprovalAuthenticationTests(unittest.TestCase):
             recurring=False, new_business_model=False, external_obligations=False,
             legal_uncertainty=False, public_representation=False,
             new_financial_write_access=False, policy_relaxation=False,
+            new_readonly_financial_adapter=False,
         )
         with patch("builtins.print"):
             ca.cmd_request_approval(approval_args)

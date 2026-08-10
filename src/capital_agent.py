@@ -85,7 +85,7 @@ def load_critical_policy() -> dict:
     return json.loads(CRITICAL_FILE.read_text(encoding="utf-8"))
 
 
-def classify_critical(amount: float = 0.0, max_loss: float = 0.0, recurring: bool = False, new_business_model: bool = False, external_obligations: bool = False, legal_uncertainty: bool = False, public_representation: bool = False, new_financial_write_access: bool = False, policy_relaxation: bool = False):
+def classify_critical(amount: float = 0.0, max_loss: float = 0.0, recurring: bool = False, new_business_model: bool = False, external_obligations: bool = False, legal_uncertainty: bool = False, public_representation: bool = False, new_financial_write_access: bool = False, policy_relaxation: bool = False, new_readonly_financial_adapter: bool = False):
     cfg = load_critical_policy()
     reasons = []
     if amount > float(cfg["noncritical_live_money_threshold_brl"]): reasons.append("live amount exceeds non-critical threshold")
@@ -96,6 +96,7 @@ def classify_critical(amount: float = 0.0, max_loss: float = 0.0, recurring: boo
     if public_representation and cfg["public_representation_of_owner_is_always_critical"]: reasons.append("public representation of owner")
     if new_financial_write_access and cfg["new_write_financial_credentials_are_always_critical"]: reasons.append("new financial write authority")
     if policy_relaxation and cfg["policy_relaxation_is_always_critical"]: reasons.append("policy relaxation")
+    if new_readonly_financial_adapter and cfg.get("new_readonly_financial_adapter_is_always_critical"): reasons.append("new read-only financial data adapter")
     return bool(reasons), reasons
 
 
@@ -400,12 +401,12 @@ def cmd_propose_system_change(args):
 
 
 def cmd_classify_decision(args):
-    critical, reasons = classify_critical(amount=args.amount, max_loss=args.max_loss, recurring=args.recurring, new_business_model=args.new_business_model, external_obligations=args.external_obligations, legal_uncertainty=args.legal_uncertainty, public_representation=args.public_representation, new_financial_write_access=args.new_financial_write_access, policy_relaxation=args.policy_relaxation)
+    critical, reasons = classify_critical(amount=args.amount, max_loss=args.max_loss, recurring=args.recurring, new_business_model=args.new_business_model, external_obligations=args.external_obligations, legal_uncertainty=args.legal_uncertainty, public_representation=args.public_representation, new_financial_write_access=args.new_financial_write_access, policy_relaxation=args.policy_relaxation, new_readonly_financial_adapter=args.new_readonly_financial_adapter)
     print(json.dumps({"critical": critical, "requires_human_authorization": critical, "reasons": reasons}, indent=2))
 
 
 def cmd_request_approval(args):
-    critical, reasons = classify_critical(amount=args.amount, max_loss=args.max_loss, recurring=args.recurring, new_business_model=args.new_business_model, external_obligations=args.external_obligations, legal_uncertainty=args.legal_uncertainty, public_representation=args.public_representation, new_financial_write_access=args.new_financial_write_access, policy_relaxation=args.policy_relaxation)
+    critical, reasons = classify_critical(amount=args.amount, max_loss=args.max_loss, recurring=args.recurring, new_business_model=args.new_business_model, external_obligations=args.external_obligations, legal_uncertainty=args.legal_uncertainty, public_representation=args.public_representation, new_financial_write_access=args.new_financial_write_access, policy_relaxation=args.policy_relaxation, new_readonly_financial_adapter=args.new_readonly_financial_adapter)
     if not critical:
         raise SystemExit("Decision is not classified as critical by current machine rules.")
     approval_id = f"APR-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -915,6 +916,7 @@ def build_parser():
     cd.add_argument("--public-representation", action="store_true")
     cd.add_argument("--new-financial-write-access", action="store_true")
     cd.add_argument("--policy-relaxation", action="store_true")
+    cd.add_argument("--new-readonly-financial-adapter", action="store_true")
     cd.set_defaults(func=cmd_classify_decision)
 
     ar = sub.add_parser("request-approval")
@@ -930,6 +932,7 @@ def build_parser():
     ar.add_argument("--public-representation", action="store_true")
     ar.add_argument("--new-financial-write-access", action="store_true")
     ar.add_argument("--policy-relaxation", action="store_true")
+    ar.add_argument("--new-readonly-financial-adapter", action="store_true")
     ar.set_defaults(func=cmd_request_approval)
 
     ad = sub.add_parser("approve-decision", help="Record human APPROVED (interactive session convention; see CRITICAL_DECISIONS.md).")
