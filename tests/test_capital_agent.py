@@ -96,6 +96,13 @@ class ContextManagementTests(unittest.TestCase):
                 self.assertTrue(target.exists())
                 self.assertIn("# Current State", target.read_text(encoding="utf-8"))
 
+    def test_knowledge_check_prints_all_required_files(self):
+        with patch("builtins.print") as mock_print:
+            ca.cmd_knowledge_check(None)
+        output = "\n".join(str(call.args[0]) if call.args else "" for call in mock_print.call_args_list)
+        for filename in ca.KNOWLEDGE_FILES_FOR_OPPORTUNITY_RESEARCH:
+            self.assertIn(filename, output)
+
     def test_append_index_appends_without_clobbering(self):
         with tempfile.TemporaryDirectory() as tmp:
             indexes_dir = Path(tmp) / "indexes"

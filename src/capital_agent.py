@@ -355,6 +355,30 @@ def cmd_experiments(_args):
 
 
 
+KNOWLEDGE_DIR = ROOT / "context" / "knowledge"
+KNOWLEDGE_FILES_FOR_OPPORTUNITY_RESEARCH = [
+    "recurring-errors.md",
+    "rejected-opportunities.md",
+    "lessons.md",
+]
+
+
+def cmd_knowledge_check(_args):
+    """Print context/knowledge/{recurring-errors,rejected-opportunities,lessons}.md
+    in full. Required reading before starting new opportunity research --
+    see AI_OPERATING_MANUAL.md 'Before new opportunity research'. Exists so
+    that step is one command instead of three manual file reads, removing
+    the excuse to skip it."""
+    for filename in KNOWLEDGE_FILES_FOR_OPPORTUNITY_RESEARCH:
+        path = KNOWLEDGE_DIR / filename
+        print(f"{'=' * 72}\n{filename}\n{'=' * 72}")
+        if path.exists():
+            print(path.read_text(encoding="utf-8"))
+        else:
+            print("(file does not exist)")
+        print()
+
+
 def cmd_system_policy(_args):
     print(json.dumps(load_system_governance(), indent=2))
 
@@ -961,6 +985,9 @@ def build_parser():
 
     sp = sub.add_parser("system-policy")
     sp.set_defaults(func=cmd_system_policy)
+
+    kc = sub.add_parser("knowledge-check", help="Print recurring-errors/rejected-opportunities/lessons before starting new opportunity research.")
+    kc.set_defaults(func=cmd_knowledge_check)
 
     sc = sub.add_parser("propose-system-change")
     sc.add_argument("--class", dest="change_class", required=True)

@@ -94,6 +94,20 @@ interpretation.
 - Preserve an auditable trail of material decisions and material system changes.
 - Prefer inaction when expected value does not justify risk, cost or uncertainty.
 
+## Before new opportunity research
+
+Run `python src/capital_agent.py knowledge-check` (prints
+`context/knowledge/recurring-errors.md`, `rejected-opportunities.md` and
+`lessons.md` in full) before starting a new opportunity-research pass. This
+is required, not optional-if-convenient — it exists because three
+business-model candidates were rejected in a row for the same underlying
+reason (sourcing ideas from generic "best ideas" searches) before that
+pattern was written down and actually consulted before the next attempt.
+The command exists specifically so this is one command instead of an excuse
+to skip three file reads. Do not start researching a new candidate without
+running it first; if a past rejection or recurring error applies, say so
+before repeating the work.
+
 ## Capital decision process
 
 For each material allocation:
