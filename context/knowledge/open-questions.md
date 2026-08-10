@@ -41,3 +41,28 @@ AI operator does not have to rediscover them from scratch.
 - Why it matters: `INVESTMENT_POLICY.md` section 7 requires an opportunity-cost
   benchmark, but `ROADMAP.md` Phase 1 has not yet selected or connected one.
 - What would resolve it: Phase 1 data-integration work.
+
+### How should a critical-decision approval be authenticated as genuinely human?
+- Raised: 2026-08-10 (Phase 0 readiness audit, `journal/reviews/phase0-readiness.md`).
+- Why it matters: `approvals/pending/<id>.md`'s `## Human decision` section is a
+  plain text field. `capital_agent.py request-execution` correctly refuses to
+  proceed unless it reads `APPROVED` there (verified by
+  `tests/test_custody_and_execution.py`), but nothing in the current
+  filesystem-only trust model stops any process with write access to the
+  repository — including an AI operator with a bug or a compromised
+  session — from writing `APPROVED` into that file itself, since there is no
+  out-of-band channel, signature, or separate human-only write path. No CLI
+  command sets that string today (verified: `grep -n APPROVED
+  src/capital_agent.py` shows it only ever being read, never written by code),
+  so this requires a positive act of editing the file by hand — but that act
+  is not technically distinguishable between "the human owner did it" and "the
+  AI operator did it." This is a structural limitation of Phase 0, not a bug
+  introduced by any specific change.
+- What would resolve it: a stronger authentication mechanism before Phase 2
+  relies on this for real money — options include a human-only local script
+  requiring interactive confirmation (e.g. a typed phrase or OS-level prompt)
+  that the AI cannot script around, requiring the approval commit to be
+  signed with a key the AI never has access to, or moving approvals to a
+  channel entirely outside the repository (e.g. a message the human sends
+  through a separate authenticated system). Needs a human decision on
+  acceptable friction before Phase 2's first real Human Execution Request.

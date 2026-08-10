@@ -46,7 +46,7 @@ POLICY = {
     "hard_drawdown_freeze_pct": 0.2,
     "require_journal_for_material_allocation": True,
     "material_allocation_brl": 10.0,
-    "human_gate_for_first_live_adapter": True,
+    "human_gate_for_first_readonly_financial_adapter": True,
     "secret_storage": "environment_or_os_secret_store_only",
 }
 
@@ -160,6 +160,7 @@ class CustodyInvariantTests(unittest.TestCase):
             args = argparse.Namespace(
                 change_class="A", title="t", problem="p", change="c", benefit="b",
                 enables_autonomous_financial_execution=True,
+                acknowledge_no_autonomous_financial_execution=False,
             )
             with patch("builtins.print"):
                 ca.cmd_propose_system_change(args)
@@ -174,11 +175,36 @@ class CustodyInvariantTests(unittest.TestCase):
             args = argparse.Namespace(
                 change_class="A", title="t", problem="p", change="c", benefit="b",
                 enables_autonomous_financial_execution=False,
+                acknowledge_no_autonomous_financial_execution=False,
             )
             with patch("builtins.print"):
                 ca.cmd_propose_system_change(args)
             content = list(ca.SYSTEM_CHANGES_DIR.glob("*.md"))[0].read_text(encoding="utf-8")
             self.assertIn("PROPOSED_AUTONOMOUSLY_ALLOWED", content)
+
+    def test_propose_system_change_flags_custody_risk_keywords_without_flag(self):
+        with sandbox():
+            args = argparse.Namespace(
+                change_class="A", title="t", problem="p",
+                change="Add a place_order() call to the new adapter.", benefit="b",
+                enables_autonomous_financial_execution=False,
+                acknowledge_no_autonomous_financial_execution=False,
+            )
+            with self.assertRaises(SystemExit):
+                ca.cmd_propose_system_change(args)
+            self.assertEqual(len(list(ca.SYSTEM_CHANGES_DIR.glob("*.md"))), 0)
+
+    def test_propose_system_change_allows_keyword_match_with_explicit_acknowledgment(self):
+        with sandbox():
+            args = argparse.Namespace(
+                change_class="A", title="t", problem="p",
+                change="Document why place_order() must never be added.", benefit="b",
+                enables_autonomous_financial_execution=False,
+                acknowledge_no_autonomous_financial_execution=True,
+            )
+            with patch("builtins.print"):
+                ca.cmd_propose_system_change(args)
+            self.assertEqual(len(list(ca.SYSTEM_CHANGES_DIR.glob("*.md"))), 1)
 
     def test_no_broker_or_exchange_client_library_referenced_in_source(self):
         forbidden = ["ccxt", "alpaca", "ib_insync", "robin_stocks", "binance", "metatrader"]
@@ -200,6 +226,28 @@ class CustodyInvariantTests(unittest.TestCase):
     def test_no_delete_command_exists_for_governance_artifacts(self):
         for forbidden_attr in ("cmd_delete_decision", "cmd_delete_approval", "cmd_delete_system_change"):
             self.assertFalse(hasattr(ca, forbidden_attr))
+
+    def test_record_refuses_buy_sell_and_capital_out(self):
+        with sandbox():
+            for blocked_type in ("buy", "sell", "capital_out"):
+                args = argparse.Namespace(
+                    type=blocked_type, category="market", amount=10.0,
+                    description="attempted direct entry", reference="TEST",
+                )
+                ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    ca.cmd_record(args)
+                self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
+
+    def test_record_still_allows_non_execution_bookkeeping(self):
+        with sandbox():
+            args = argparse.Namespace(
+                type="expense", category="infrastructure", amount=5.0,
+                description="hosting", reference="TEST-EXP-1",
+            )
+            with patch("builtins.print"):
+                ca.cmd_record(args)
+            self.assertIn("TEST-EXP-1", ca.LEDGER_FILE.read_text(encoding="utf-8"))
 
 
 class HumanExecutionRequestLifecycleTests(unittest.TestCase):

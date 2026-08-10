@@ -261,12 +261,27 @@ Complete evidence and red-team review.
     }, indent=2))
 
 
+RECORD_BLOCKED_TYPES = {"buy", "sell", "capital_out"}
+
+
 def cmd_record(args):
     allowed = {"capital_in", "revenue", "sell", "refund", "expense", "buy",
                "fee", "tax", "capital_out", "adjustment"}
     if args.type not in allowed:
         raise SystemExit(f"unsupported ledger type: {args.type}")
-    if args.type in {"buy", "expense", "fee", "tax", "capital_out"}:
+    if args.type in RECORD_BLOCKED_TYPES:
+        raise SystemExit(
+            f"refused: '{args.type}' represents a real financial execution "
+            "(a market position change or money leaving custody) and may "
+            "only enter the ledger through the Human Execution Request "
+            "lifecycle: `request-execution` then `confirm-execution`. "
+            "Direct `record` of this type would let it be entered without "
+            "human confirmation, which the custody invariant "
+            "(AI_OPERATING_MANUAL.md) does not permit. If this is the "
+            "initial funding event or a non-execution bookkeeping entry, "
+            "use a type outside {buy, sell, capital_out}."
+        )
+    if args.type in {"expense", "fee", "tax"}:
         if args.amount > cash_balance():
             raise SystemExit("insufficient verified cash")
     append_ledger(args.type, args.category, args.amount, args.description, args.reference)
@@ -317,6 +332,14 @@ def cmd_system_policy(_args):
     print(json.dumps(load_system_governance(), indent=2))
 
 
+CUSTODY_RISK_KEYWORDS = (
+    "place_order", "placeorder", "send_order", "sendorder", "auto-execute",
+    "autoexecute", "autonomous execution", "broker api", "exchange api",
+    "write access", "write-capable", "trading api", "withdraw(", "transfer(",
+    "buy(", "sell(",
+)
+
+
 def cmd_propose_system_change(args):
     governance = load_system_governance()
     change_class = args.change_class.upper()
@@ -326,6 +349,25 @@ def cmd_propose_system_change(args):
 
     if change_class not in allowed_classes | human_classes | prohibited_classes:
         raise SystemExit(f"unknown system change class: {change_class}")
+
+    # Self-declaration safety net: the --enables-autonomous-financial-execution
+    # flag only protects the custody invariant if the proposer sets it
+    # honestly. As a second, independent check, scan the proposal text itself
+    # for language suggesting financial write capability; if found without the
+    # flag or an explicit acknowledgment, refuse rather than silently proceed.
+    combined_text = f"{args.problem} {args.change} {args.benefit}".lower()
+    matched_keywords = [kw for kw in CUSTODY_RISK_KEYWORDS if kw in combined_text]
+    if matched_keywords and not args.enables_autonomous_financial_execution and not args.acknowledge_no_autonomous_financial_execution:
+        raise SystemExit(
+            "refused: this proposal's text matches custody-risk keyword(s) "
+            f"{matched_keywords}. If this change would grant any financial "
+            "write capability, re-run with "
+            "--enables-autonomous-financial-execution (it will be rejected "
+            "as Class D). If it does not, re-run with "
+            "--acknowledge-no-autonomous-financial-execution to confirm that "
+            "explicitly. This check cannot see intent, only text, so it "
+            "errs toward asking rather than guessing."
+        )
 
     # Custody invariant: no self-proposed change may grant autonomous financial
     # write authority, regardless of the class the proposer requested. This
@@ -810,6 +852,9 @@ def build_parser():
                      help="Must be set truthfully if the change would grant the system "
                           "any financial write capability. Forces REJECTED_PROHIBITED "
                           "(Class D) regardless of --class.")
+    sc.add_argument("--acknowledge-no-autonomous-financial-execution", action="store_true",
+                     help="Required when the proposal text matches a custody-risk keyword "
+                          "but does not actually enable financial write capability.")
     sc.set_defaults(func=cmd_propose_system_change)
 
 

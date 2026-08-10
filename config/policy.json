@@ -19,6 +19,6 @@
   "hard_drawdown_freeze_pct": 0.2,
   "require_journal_for_material_allocation": true,
   "material_allocation_brl": 10.0,
-  "human_gate_for_first_live_adapter": true,
+  "human_gate_for_first_readonly_financial_adapter": true,
   "secret_storage": "environment_or_os_secret_store_only"
 }
