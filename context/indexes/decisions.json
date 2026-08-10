@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "DEC-20260810-A032A0",
+    "date": "2026-08-10T12:05:00-03:00",
+    "title": "First opportunity cycle: capital-allocation strategy at BRL 1,000 scale",
+    "category": "strategy",
+    "amount_brl": 0.0,
+    "status": "OBSERVE_DIRECTION_SETTING",
+    "path": "journal/decisions/DEC-20260810-A032A0.md"
+  }
+]

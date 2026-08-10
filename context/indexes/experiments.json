@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "EXP-20260810-1F7147",
+    "created_at": "2026-08-10T11:56:49-03:00",
+    "title": "Validate demand for a paid AI/AWS engineering micro-offer",
+    "budget_brl": 20.0,
+    "max_loss_brl": 20.0,
+    "status": "planned",
+    "path": "experiments/active/EXP-20260810-1F7147.json"
+  }
+]

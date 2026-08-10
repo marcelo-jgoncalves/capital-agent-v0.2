@@ -37,10 +37,18 @@ AI operator does not have to rediscover them from scratch.
   implementing it as a Class A system change (see `SYSTEM_EVOLUTION.md`).
 
 ### What counts as a "reliable" low-risk BRL benchmark data source?
-- Raised: 2026-08-10 (repository initialization)
-- Why it matters: `INVESTMENT_POLICY.md` section 7 requires an opportunity-cost
-  benchmark, but `ROADMAP.md` Phase 1 has not yet selected or connected one.
-- What would resolve it: Phase 1 data-integration work.
+- Raised: 2026-08-10 (repository initialization).
+- Partially resolved: 2026-08-10. A first manual snapshot exists
+  (`evaluation/benchmarks/2026-08-brl-risk-free.md`, Selic 14% a.a. via
+  WebSearch, cross-checked across 3 sources) and was used as the hurdle rate
+  in the first opportunity-cycle decision
+  (`journal/decisions/DEC-20260810-A032A0.md`).
+- Why it still matters: still manual and unautomated, will go stale. The
+  Yahoo Finance MCP added this session covers US equities, not a BCB/B3/Selic
+  feed — a different source is needed to automate this specific benchmark.
+- What would resolve it fully: `ROADMAP.md` Phase 1 data-integration work —
+  find and wire up a repeatable BCB/Tesouro Direto data source instead of
+  re-searching the web manually each time.
 
 ### How should a critical-decision approval be authenticated as genuinely human?
 - Raised: 2026-08-10 (Phase 0 readiness audit, `journal/reviews/phase0-readiness.md`).

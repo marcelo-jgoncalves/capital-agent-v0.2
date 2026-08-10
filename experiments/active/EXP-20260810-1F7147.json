@@ -1,0 +1,13 @@
+{
+  "id": "EXP-20260810-1F7147",
+  "created_at": "2026-08-10T11:56:49-03:00",
+  "title": "Validate demand for a paid AI/AWS engineering micro-offer",
+  "hypothesis": "A narrowly scoped, fixed-price offer (e.g. a paid AWS/AI architecture quick-review or similar productized service) tied to the human owner's existing consulting/blog positioning generates paid interest beyond organic traffic when boosted with a small paid test, validating a growth vector that does not compete for the BRL 100 single-position capital ceiling that caps market-based strategies at current equity.",
+  "budget_brl": 20.0,
+  "max_loss_brl": 20.0,
+  "success_metric": "At least 1 paid conversion OR at least 5 qualified inbound leads (explicit interest, reply, or booking) within 14 days of launch.",
+  "kill_condition": "Fewer than 2 qualified signals within 14 days despite the test budget being fully spent.",
+  "status": "planned",
+  "policy_issues": [],
+  "cash_flows": []
+}
