@@ -54,5 +54,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-E87857.md"
+  },
+  {
+    "id": "SYS-20260810-B3962E",
+    "date": "2026-08-10T12:39:43-03:00",
+    "title": "Move decided approvals out of approvals/pending/ automatically",
+    "class": "A",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260810-B3962E.md"
   }
 ]

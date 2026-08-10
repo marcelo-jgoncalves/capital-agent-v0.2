@@ -475,14 +475,21 @@ def _record_human_decision(approval_id: str, decision: str, human_statement: str
         f'- Human statement (verbatim): "{human_statement}"\n'
     )
     path.write_text(header + record, encoding="utf-8")
-    return path
+    # Move out of pending/ once a human decision is recorded, mirroring the
+    # execution-request lifecycle (pending -> exactly one terminal location).
+    # _approval_decision() checks both dirs, so anything already referencing
+    # this approval by ID keeps working unaffected.
+    APPROVALS_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    archived_path = APPROVALS_ARCHIVE_DIR / path.name
+    path.rename(archived_path)
+    return archived_path
 
 
 def cmd_approve_decision(args):
     path = _record_human_decision(args.approval_id, "APPROVED", args.human_statement)
     append_index("approvals", {
         "id": args.approval_id, "date": now_iso(), "status": "APPROVED",
-        "path": f"approvals/pending/{path.name}",
+        "path": f"approvals/archive/{path.name}",
     })
     print(json.dumps({"approval_id": args.approval_id, "status": "APPROVED", "path": str(path)}, indent=2))
 
@@ -491,7 +498,7 @@ def cmd_reject_decision(args):
     path = _record_human_decision(args.approval_id, "REJECTED", args.human_statement)
     append_index("approvals", {
         "id": args.approval_id, "date": now_iso(), "status": "REJECTED",
-        "path": f"approvals/pending/{path.name}",
+        "path": f"approvals/archive/{path.name}",
     })
     print(json.dumps({"approval_id": args.approval_id, "status": "REJECTED", "path": str(path)}, indent=2))
 

@@ -463,7 +463,8 @@ class ApprovalAuthenticationTests(unittest.TestCase):
                     approval_id=approval_id,
                     human_statement="I approve this specific allocation.",
                 ))
-            content = (ca.APPROVALS_PENDING_DIR / f"{approval_id}.md").read_text(encoding="utf-8")
+            self.assertFalse((ca.APPROVALS_PENDING_DIR / f"{approval_id}.md").exists())
+            content = (ca.APPROVALS_ARCHIVE_DIR / f"{approval_id}.md").read_text(encoding="utf-8")
             self.assertIn("APPROVED (interactive session, single-operator machine)", content)
             self.assertIn("I approve this specific allocation.", content)
             self.assertEqual(ca._approval_decision(approval_id), "APPROVED")
@@ -476,7 +477,8 @@ class ApprovalAuthenticationTests(unittest.TestCase):
                     approval_id=approval_id,
                     human_statement="No, too risky right now.",
                 ))
-            content = (ca.APPROVALS_PENDING_DIR / f"{approval_id}.md").read_text(encoding="utf-8")
+            self.assertFalse((ca.APPROVALS_PENDING_DIR / f"{approval_id}.md").exists())
+            content = (ca.APPROVALS_ARCHIVE_DIR / f"{approval_id}.md").read_text(encoding="utf-8")
             self.assertIn("REJECTED (interactive session, single-operator machine)", content)
             self.assertIn("No, too risky right now.", content)
             self.assertEqual(ca._approval_decision(approval_id), "REJECTED")
