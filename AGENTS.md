@@ -2,13 +2,15 @@
 
 This file exists for AI tools that automatically discover `AGENTS.md`.
 
-The canonical, vendor-neutral instructions are in:
+Read `START_HERE.md` before material work. It routes to the canonical,
+vendor-neutral instructions:
 
 1. `AI_OPERATING_MANUAL.md`
 2. `INVESTMENT_POLICY.md`
 3. `HUMAN_GATES.md`
 4. `SYSTEM_EVOLUTION.md`
 5. machine-readable files under `config/`
+6. `context/CURRENT_STATE.md` for current repository state
 
 Read and follow those files before material work.
 

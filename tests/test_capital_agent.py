@@ -53,5 +53,42 @@ class CapitalAgentTests(unittest.TestCase):
         self.assertTrue(critical)
         self.assertTrue(any("policy relaxation" in x for x in reasons))
 
+
+class ContextManagementTests(unittest.TestCase):
+    def test_build_current_state_reflects_verified_cash(self):
+        content = ca.build_current_state()
+        self.assertIn(f"Verified cash: BRL {ca.cash_balance():.2f}", content)
+        self.assertIn("Do not hand-edit", content)
+
+    def test_build_current_state_never_fabricates_missing_values(self):
+        content = ca.build_current_state()
+        self.assertIn("not yet implemented", content)
+
+    def test_update_context_writes_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "CURRENT_STATE.md"
+            with patch.object(ca, "CONTEXT_DIR", Path(tmp)), \
+                 patch.object(ca, "CURRENT_STATE_FILE", target):
+                ca.cmd_update_context(None)
+                self.assertTrue(target.exists())
+                self.assertIn("# Current State", target.read_text(encoding="utf-8"))
+
+    def test_append_index_appends_without_clobbering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            indexes_dir = Path(tmp) / "indexes"
+            indexes_dir.mkdir()
+            with patch.object(ca, "INDEXES_DIR", indexes_dir):
+                ca.append_index("decisions", {"id": "DEC-1"})
+                ca.append_index("decisions", {"id": "DEC-2"})
+                data = json.loads((indexes_dir / "decisions.json").read_text(encoding="utf-8"))
+                self.assertEqual([d["id"] for d in data], ["DEC-1", "DEC-2"])
+
+    def test_append_index_tolerates_missing_context_dir(self):
+        missing = Path(tempfile.gettempdir()) / "capital_agent_test_missing_context_dir"
+        with patch.object(ca, "INDEXES_DIR", missing):
+            ca.append_index("decisions", {"id": "DEC-X"})  # must not raise
+        self.assertFalse(missing.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

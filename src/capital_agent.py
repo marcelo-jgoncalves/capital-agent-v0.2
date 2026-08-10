@@ -20,10 +20,32 @@ ACTIVE_EXPERIMENTS_DIR = ROOT / "experiments" / "active"
 ARCHIVE_EXPERIMENTS_DIR = ROOT / "experiments" / "archive"
 SYSTEM_GOVERNANCE_FILE = ROOT / "config" / "system_governance.json"
 SYSTEM_CHANGES_DIR = ROOT / "journal" / "system_changes"
+APPROVALS_DIR = ROOT / "approvals"
+CONTEXT_DIR = ROOT / "context"
+CURRENT_STATE_FILE = CONTEXT_DIR / "CURRENT_STATE.md"
+INDEXES_DIR = CONTEXT_DIR / "indexes"
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def append_index(index_name: str, entry: dict) -> None:
+    """Append a summary entry to context/indexes/<index_name>.json.
+
+    Indexes are a derived cache for fast lookup; the journal/experiment/approval
+    files under journal/, experiments/ and approvals/ remain the source of truth.
+    Missing index files are tolerated (context/ may not exist in older checkouts).
+    """
+    path = INDEXES_DIR / f"{index_name}.json"
+    if not path.parent.exists():
+        return
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except json.JSONDecodeError:
+        existing = []
+    existing.append(entry)
+    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def load_policy() -> dict:
@@ -192,6 +214,15 @@ Define before any live test.
 Complete evidence and red-team review.
 """
     path.write_text(body, encoding="utf-8")
+    append_index("decisions", {
+        "id": decision_id,
+        "date": now_iso(),
+        "title": args.title,
+        "category": args.category,
+        "amount_brl": round(args.amount, 2),
+        "status": status,
+        "path": f"journal/decisions/{decision_id}.md",
+    })
     print(json.dumps({
         "decision_id": decision_id,
         "status": status,
@@ -231,6 +262,15 @@ def cmd_new_experiment(args):
     }
     path = ACTIVE_EXPERIMENTS_DIR / f"{exp_id}.json"
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    append_index("experiments", {
+        "id": exp_id,
+        "created_at": data["created_at"],
+        "title": args.title,
+        "budget_brl": data["budget_brl"],
+        "max_loss_brl": data["max_loss_brl"],
+        "status": status,
+        "path": f"experiments/active/{exp_id}.json",
+    })
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
@@ -269,6 +309,14 @@ def cmd_propose_system_change(args):
     path = SYSTEM_CHANGES_DIR / f"{change_id}.md"
     body = f"""# System Change: {args.title}\n\n- Date/time: {now_iso()}\n- Change ID: {change_id}\n- Change class: {change_class}\n- Status: {status}\n\n## Problem observed\n\n{args.problem}\n\n## Evidence\n\nTo be completed.\n\n## Proposed change\n\n{args.change}\n\n## Expected benefit\n\n{args.benefit}\n\n## New risks introduced\n\nTo be completed.\n\n## Authority impact\n\nMust be explicitly assessed before implementation.\n\n## Rollback plan\n\nRequired before implementation for material changes.\n\n## Validation plan\n\nRun relevant tests/checks and compare before/after behavior.\n\n## Human approval\n\n{'Required before activation.' if change_class in human_classes else 'Not required by class; still subject to canonical policy.'}\n"""
     path.write_text(body, encoding="utf-8")
+    append_index("system-changes", {
+        "id": change_id,
+        "date": now_iso(),
+        "title": args.title,
+        "class": change_class,
+        "status": status,
+        "path": f"journal/system_changes/{change_id}.md",
+    })
     print(json.dumps({"change_id": change_id, "class": change_class, "status": status, "path": str(path)}, indent=2))
 
 
@@ -289,7 +337,154 @@ def cmd_request_approval(args):
     lines += [f"- {r}" for r in reasons]
     lines += ["", "## Why this action", "", args.thesis, "", "## Alternatives", "", "Must include doing nothing and the best known alternative.", "", "## Critic assessment", "", "REQUIRED BEFORE HUMAN AUTHORIZATION.", "", "## Policy checks", "", "REQUIRED BEFORE HUMAN AUTHORIZATION.", "", "## Exact authorization requested", "", "Authorize only the bounded action described above and only within the stated capital/loss limits.", "", "## Human decision", "", "PENDING", ""]
     path.write_text("\n".join(lines), encoding="utf-8")
+    append_index("approvals", {
+        "id": approval_id,
+        "date": now_iso(),
+        "title": args.title,
+        "category": args.category,
+        "amount_brl": round(args.amount, 2),
+        "max_loss_brl": round(args.max_loss, 2),
+        "status": "PENDING",
+        "path": f"approvals/pending/{approval_id}.md",
+    })
     print(json.dumps({"approval_id": approval_id, "status": "PENDING", "path": str(path), "criticality_reasons": reasons}, indent=2))
+
+def _list_json(dir_path: Path) -> list[dict]:
+    if not dir_path.exists():
+        return []
+    out = []
+    for p in sorted(dir_path.glob("*.json")):
+        try:
+            out.append(json.loads(p.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return out
+
+
+def _list_md_ids(dir_path: Path) -> list[str]:
+    if not dir_path.exists():
+        return []
+    return sorted(p.stem for p in dir_path.glob("*.md"))
+
+
+def build_current_state() -> str:
+    policy = load_policy()
+    equity = current_equity_floor()
+    cash = cash_balance()
+    ledger = read_ledger()
+
+    active_experiments = _list_json(ACTIVE_EXPERIMENTS_DIR)
+    archived_experiments = _list_json(ARCHIVE_EXPERIMENTS_DIR)
+    decision_ids = _list_md_ids(DECISIONS_DIR)
+    system_change_ids = _list_md_ids(SYSTEM_CHANGES_DIR)
+    pending_approval_ids = _list_md_ids(APPROVALS_PENDING_DIR)
+
+    lines = []
+    lines.append("# Current State")
+    lines.append("")
+    lines.append("Generated deterministically by `python src/capital_agent.py update-context`.")
+    lines.append("Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.")
+    lines.append("")
+    lines.append(f"- Generated at: {now_iso()}")
+    lines.append(f"- Repository/policy version: {policy.get('policy_version', 'unknown')}")
+    lines.append("- Phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)")
+    lines.append("")
+    lines.append("## Capital (verified from data/ledger.csv)")
+    lines.append("")
+    lines.append(f"- Initial capital: BRL {float(policy['initial_capital']):.2f}")
+    lines.append(f"- Verified cash: BRL {cash:.2f}")
+    lines.append(f"- Verified equity floor (cash only; Phase 0 does not mark other positions): BRL {equity:.2f}")
+    lines.append(f"- Capital invested (market/experiment buckets): not yet implemented (no bucket-level ledger breakdown)")
+    lines.append(f"- Capital committed (open experiment budgets not yet spent): not yet implemented")
+    lines.append(f"- Drawdown from equity high-water mark: not yet implemented (no high-water-mark tracking yet)")
+    lines.append(f"- Ledger entries: {len(ledger)}")
+    lines.append("")
+    lines.append("## Execution tier & limits (config/policy.json)")
+    lines.append("")
+    lines.append(f"- Execution tier: {policy['execution_tier']}")
+    lines.append(f"- Live execution enabled: {policy['live_execution_enabled']}")
+    lines.append(f"- Max single live allocation: BRL {equity * float(policy['max_single_live_allocation_pct_equity']):.2f}")
+    lines.append(f"- Min cash reserve: BRL {equity * float(policy['min_cash_reserve_pct_equity']):.2f}")
+    lines.append(f"- Hard drawdown freeze: {float(policy['hard_drawdown_freeze_pct']) * 100:.0f}% of equity")
+    lines.append("")
+    lines.append("## Positions")
+    lines.append("")
+    lines.append("None recorded. Phase 0 has no live execution adapter.")
+    lines.append("")
+    lines.append("## Active experiments")
+    lines.append("")
+    if active_experiments:
+        for e in active_experiments:
+            lines.append(f"- {e.get('id')}: {e.get('title')} — status={e.get('status')}, budget=BRL {e.get('budget_brl')}, max_loss=BRL {e.get('max_loss_brl')}")
+    else:
+        lines.append("None.")
+    lines.append("")
+    lines.append("## Archived experiments")
+    lines.append("")
+    lines.append(f"{len(archived_experiments)} archived." if archived_experiments else "None.")
+    lines.append("")
+    lines.append("## Pending critical-decision approvals (approvals/pending/)")
+    lines.append("")
+    if pending_approval_ids:
+        for aid in pending_approval_ids:
+            lines.append(f"- {aid} — see `approvals/pending/{aid}.md`")
+    else:
+        lines.append("None.")
+    lines.append("")
+    lines.append("## Recent decisions (journal/decisions/)")
+    lines.append("")
+    if decision_ids:
+        for did in decision_ids[-10:]:
+            lines.append(f"- {did}")
+    else:
+        lines.append("None recorded yet.")
+    lines.append("")
+    lines.append("## Recent system changes (journal/system_changes/)")
+    lines.append("")
+    if system_change_ids:
+        for sid in system_change_ids[-10:]:
+            lines.append(f"- {sid}")
+    else:
+        lines.append("None recorded yet.")
+    lines.append("")
+    lines.append("## Risks")
+    lines.append("")
+    lines.append("- No live execution adapter exists yet; Phase 0 caps exposure to zero live risk.")
+    lines.append("- No historical equity high-water mark is tracked yet, so drawdown cannot be computed.")
+    lines.append("")
+    lines.append("## Hypotheses")
+    lines.append("")
+    lines.append("None recorded yet. See `context/knowledge/open-questions.md`.")
+    lines.append("")
+    lines.append("## Benchmarks")
+    lines.append("")
+    lines.append("Not yet implemented. See `INVESTMENT_POLICY.md` section 7.")
+    lines.append("")
+    lines.append("## Data limitations")
+    lines.append("")
+    lines.append("- No market/macro data feed connected yet (Phase 1 work).")
+    lines.append("- Equity floor counts verified ledger cash only; no marked positions or receivables exist yet.")
+    lines.append("")
+    lines.append("## Next actions (from ROADMAP.md Phase 0)")
+    lines.append("")
+    lines.append("- Configure the chosen AI execution environment.")
+    lines.append("- Run Phase 0 readiness audit (`PHASE0_READINESS_PROMPT.md`).")
+    lines.append("- Run first opportunity research cycle.")
+    lines.append("")
+    lines.append("## References")
+    lines.append("")
+    lines.append("- `START_HERE.md`, `CONTEXT_MANAGEMENT.md`")
+    lines.append("- `AI_OPERATING_MANUAL.md`, `INVESTMENT_POLICY.md`, `CRITICAL_DECISIONS.md`, `EVALUATION_CRITIC_SYSTEM.md`, `SYSTEM_EVOLUTION.md`, `HUMAN_GATES.md`, `ARCHITECTURE.md`, `ROADMAP.md`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_update_context(_args):
+    CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+    content = build_current_state()
+    CURRENT_STATE_FILE.write_text(content, encoding="utf-8")
+    print(json.dumps({"updated": str(CURRENT_STATE_FILE)}, indent=2))
+
 
 def build_parser():
     p = argparse.ArgumentParser(description="Capital Agent local control CLI")
@@ -363,6 +558,9 @@ def build_parser():
     ar.add_argument("--new-financial-write-access", action="store_true")
     ar.add_argument("--policy-relaxation", action="store_true")
     ar.set_defaults(func=cmd_request_approval)
+
+    uc = sub.add_parser("update-context")
+    uc.set_defaults(func=cmd_update_context)
 
     return p
 
