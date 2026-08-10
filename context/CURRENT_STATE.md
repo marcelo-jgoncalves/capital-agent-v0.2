@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T11:57:56-03:00
+- Generated at: 2026-08-10T12:08:21-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -12,7 +12,8 @@ Do not hand-edit; edit the underlying sources (ledger, config, experiments, jour
 
 - Initial capital: BRL 1000.00
 - Verified cash: BRL 1000.00
-- Verified equity floor (cash only; Phase 0 does not mark other positions): BRL 1000.00
+- Reserve instruments booked (data/reserve_assets.json, e.g. Tesouro Selic, conservatively valued at cost): BRL 0.00
+- Verified equity floor (cash + booked reserve instruments; other market positions still not marked): BRL 1000.00
 - Capital invested (market/experiment buckets): not yet implemented (no bucket-level ledger breakdown)
 - Capital committed (open experiment budgets not yet spent): not yet implemented
 - Drawdown from equity high-water mark: not yet implemented (no high-water-mark tracking yet)
@@ -45,6 +46,7 @@ None.
 
 ## Pending critical-decision approvals (approvals/pending/)
 
+- APR-20260810-3DA546 — see `approvals/pending/APR-20260810-3DA546.md`
 - APR-20260810-7BFB0C — see `approvals/pending/APR-20260810-7BFB0C.md`
 
 ## Recent decisions (journal/decisions/)
@@ -58,6 +60,7 @@ None.
 - SYS-20260810-C76D60
 - SYS-20260810-C894F1
 - SYS-20260810-D62661
+- SYS-20260810-E87857
 - SYS-20260810-F9CEAA
 
 ## Risks

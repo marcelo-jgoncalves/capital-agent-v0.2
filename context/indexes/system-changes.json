@@ -46,5 +46,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-C76D60.md"
+  },
+  {
+    "id": "SYS-20260810-E87857",
+    "date": "2026-08-10T12:07:48-03:00",
+    "title": "Track reserve instruments (e.g. Tesouro Selic) so equity floor stops understating patrimony",
+    "class": "A",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260810-E87857.md"
   }
 ]

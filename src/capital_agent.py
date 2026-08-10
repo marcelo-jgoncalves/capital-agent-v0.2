@@ -15,6 +15,7 @@ POLICY_FILE = ROOT / "config" / "policy.json"
 CRITICAL_FILE = ROOT / "config" / "critical_decisions.json"
 APPROVALS_PENDING_DIR = ROOT / "approvals" / "pending"
 LEDGER_FILE = ROOT / "data" / "ledger.csv"
+RESERVE_ASSETS_FILE = ROOT / "data" / "reserve_assets.json"
 DECISIONS_DIR = ROOT / "journal" / "decisions"
 ACTIVE_EXPERIMENTS_DIR = ROOT / "experiments" / "active"
 ARCHIVE_EXPERIMENTS_DIR = ROOT / "experiments" / "archive"
@@ -123,10 +124,29 @@ def cash_balance() -> float:
     return round(balance, 2)
 
 
+def load_reserve_assets() -> list[dict]:
+    if not RESERVE_ASSETS_FILE.exists():
+        return []
+    return json.loads(RESERVE_ASSETS_FILE.read_text(encoding="utf-8"))
+
+
+def reserve_assets_value() -> float:
+    """Conservative book value of low-price-risk reserve instruments (e.g.
+    Tesouro Selic) held outside cash. Valued at cost/last confirmed execution
+    total, never marked up -- accrued yield is intentionally not estimated,
+    so this always understates rather than overstates true value. See
+    record-reserve-asset / cmd_record_reserve_asset."""
+    return round(sum(float(a["book_value_brl"]) for a in load_reserve_assets()), 2)
+
+
 def current_equity_floor() -> float:
-    # Phase 0: only verified ledger cash is counted.
-    # Later adapters may add marked positions/receivables.
-    return cash_balance()
+    # Phase 0: verified ledger cash plus conservatively booked reserve
+    # instruments (data/reserve_assets.json). Market positions with real
+    # price risk are still not marked -- only near-cash reserve instruments
+    # recorded via record-reserve-asset, each tied to a completed Human
+    # Execution Request so the value traces back to a real, human-confirmed
+    # transaction rather than being asserted.
+    return round(cash_balance() + reserve_assets_value(), 2)
 
 
 def append_ledger(typ: str, category: str, amount: float, description: str, reference: str):
@@ -174,6 +194,7 @@ def cmd_status(_args):
         "autonomous_financial_execution_permitted": policy["autonomous_financial_execution_permitted"],
         "ledger_entries": len(ledger),
         "verified_cash_brl": cash_balance(),
+        "reserve_assets_brl": reserve_assets_value(),
         "verified_equity_floor_brl": current_equity_floor(),
         "max_single_live_allocation_brl": round(
             current_equity_floor() * policy["max_single_live_allocation_pct_equity"], 2
@@ -701,6 +722,39 @@ def cmd_list_execution_requests(_args):
     print(json.dumps(requests, indent=2, ensure_ascii=False))
 
 
+def cmd_record_reserve_asset(args):
+    """Record a near-cash reserve instrument (e.g. Tesouro Selic) so
+    current_equity_floor() stops understating patrimony after a confirmed
+    purchase. Book value is derived from the referenced completed Human
+    Execution Request, never taken as a free-form number, so it always
+    traces back to something the human actually confirmed."""
+    path = HR_COMPLETED_DIR / f"{args.execution_id}.json"
+    if not path.exists():
+        raise SystemExit(
+            f"no completed execution request: {args.execution_id}. "
+            "record-reserve-asset only accepts execution IDs that were "
+            "actually confirmed via confirm-execution."
+        )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("action") != "BUY":
+        raise SystemExit(f"execution {args.execution_id} is not a BUY; refusing to book it as a reserve asset")
+    book_value = data["confirmation"]["executed_total_brl"]
+
+    entry = {
+        "id": f"RA-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+        "execution_id": args.execution_id,
+        "asset": data.get("asset"),
+        "category": args.category,
+        "book_value_brl": book_value,
+        "recorded_at": now_iso(),
+        "note": args.note,
+    }
+    assets = load_reserve_assets()
+    assets.append(entry)
+    RESERVE_ASSETS_FILE.write_text(json.dumps(assets, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(json.dumps({"recorded": entry, "verified_equity_floor_brl": current_equity_floor()}, indent=2))
+
+
 def _list_json(dir_path: Path) -> list[dict]:
     if not dir_path.exists():
         return []
@@ -745,9 +799,14 @@ def build_current_state() -> str:
     lines.append("")
     lines.append("## Capital (verified from data/ledger.csv)")
     lines.append("")
+    reserve_assets = load_reserve_assets()
     lines.append(f"- Initial capital: BRL {float(policy['initial_capital']):.2f}")
     lines.append(f"- Verified cash: BRL {cash:.2f}")
-    lines.append(f"- Verified equity floor (cash only; Phase 0 does not mark other positions): BRL {equity:.2f}")
+    lines.append(f"- Reserve instruments booked (data/reserve_assets.json, e.g. Tesouro Selic, conservatively valued at cost): BRL {reserve_assets_value():.2f}")
+    lines.append(f"- Verified equity floor (cash + booked reserve instruments; other market positions still not marked): BRL {equity:.2f}")
+    if reserve_assets:
+        for a in reserve_assets:
+            lines.append(f"  - {a.get('id')}: {a.get('asset')} — BRL {a.get('book_value_brl')} (execution {a.get('execution_id')})")
     lines.append(f"- Capital invested (market/experiment buckets): not yet implemented (no bucket-level ledger breakdown)")
     lines.append(f"- Capital committed (open experiment budgets not yet spent): not yet implemented")
     lines.append(f"- Drawdown from equity high-water mark: not yet implemented (no high-water-mark tracking yet)")
@@ -997,6 +1056,12 @@ def build_parser():
 
     le = sub.add_parser("execution-requests")
     le.set_defaults(func=cmd_list_execution_requests)
+
+    rra = sub.add_parser("record-reserve-asset", help="Book a confirmed BUY (e.g. Tesouro Selic) as a reserve instrument so the equity floor reflects it.")
+    rra.add_argument("--execution-id", required=True)
+    rra.add_argument("--category", default="reserve")
+    rra.add_argument("--note", default="")
+    rra.set_defaults(func=cmd_record_reserve_asset)
 
     return p
 

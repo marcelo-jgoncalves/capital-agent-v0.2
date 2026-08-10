@@ -14,5 +14,15 @@
     "date": "2026-08-10T11:49:38-03:00",
     "status": "APPROVED",
     "path": "approvals/pending/APR-20260810-7BFB0C.md"
+  },
+  {
+    "id": "APR-20260810-3DA546",
+    "date": "2026-08-10T12:07:12-03:00",
+    "title": "Move BRL 100 idle reserve into Tesouro Selic (tranche 1)",
+    "category": "reserve-management",
+    "amount_brl": 100.0,
+    "max_loss_brl": 3.0,
+    "status": "PENDING",
+    "path": "approvals/pending/APR-20260810-3DA546.md"
   }
 ]

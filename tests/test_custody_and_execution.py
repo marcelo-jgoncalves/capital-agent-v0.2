@@ -112,6 +112,7 @@ def sandbox():
             "CRITICAL_FILE": root / "config" / "critical_decisions.json",
             "SYSTEM_GOVERNANCE_FILE": root / "config" / "system_governance.json",
             "LEDGER_FILE": root / "data" / "ledger.csv",
+            "RESERVE_ASSETS_FILE": root / "data" / "reserve_assets.json",
             "DECISIONS_DIR": root / "journal" / "decisions",
             "SYSTEM_CHANGES_DIR": root / "journal" / "system_changes",
             "ACTIVE_EXPERIMENTS_DIR": root / "experiments" / "active",
@@ -380,6 +381,65 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             content = ca.build_current_state()
             self.assertIn(request_id, content)
             self.assertIn("Pending Human Execution Requests", content)
+
+
+class ReserveAssetTests(unittest.TestCase):
+    def _confirm_a_buy(self, quantity=1.0, price=20.0, fees=0.0):
+        with patch("builtins.print"):
+            ca.cmd_request_execution(_execution_args(
+                action="BUY", asset="Tesouro Selic", quantity=quantity, max_price=price,
+                max_total_capital=quantity * price + fees, max_loss=quantity * price + fees,
+            ))
+        request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+        with patch("builtins.print"):
+            ca.cmd_confirm_execution(argparse.Namespace(
+                id=request_id, executed_quantity=quantity, executed_price=price, fees=fees,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            ))
+        return request_id
+
+    def test_equity_floor_understates_by_default_before_booking(self):
+        with sandbox():
+            equity_before = ca.current_equity_floor()
+            self._confirm_a_buy(quantity=1.0, price=20.0)
+            self.assertAlmostEqual(ca.current_equity_floor(), equity_before - 20.0, places=2)
+
+    def test_record_reserve_asset_restores_equity_floor(self):
+        with sandbox():
+            equity_before = ca.current_equity_floor()
+            request_id = self._confirm_a_buy(quantity=1.0, price=20.0)
+            ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="test"))
+            self.assertAlmostEqual(ca.current_equity_floor(), equity_before, places=2)
+            self.assertAlmostEqual(ca.reserve_assets_value(), 20.0, places=2)
+
+    def test_record_reserve_asset_refuses_unconfirmed_execution(self):
+        with sandbox():
+            with self.assertRaises(SystemExit):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id="HER-DOES-NOT-EXIST", category="reserve", note=""))
+
+    def test_record_reserve_asset_refuses_non_buy_execution(self):
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args(
+                    action="TRANSFER", max_total_capital=10.0, max_loss=10.0,
+                    destination_controlled_by_human=True,
+                ))
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+            with patch("builtins.print"):
+                ca.cmd_confirm_execution(argparse.Namespace(
+                    id=request_id, executed_quantity=1.0, executed_price=10.0, fees=0.0,
+                    executed_timestamp=None, category=None, ledger_type=None, notes="",
+                ))
+            with self.assertRaises(SystemExit):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note=""))
+
+    def test_book_value_is_derived_not_free_form(self):
+        with sandbox():
+            request_id = self._confirm_a_buy(quantity=2.0, price=10.0, fees=0.5)
+            ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note=""))
+            assets = ca.load_reserve_assets()
+            self.assertEqual(len(assets), 1)
+            self.assertAlmostEqual(assets[0]["book_value_brl"], 20.5, places=2)
 
 
 class ApprovalAuthenticationTests(unittest.TestCase):
