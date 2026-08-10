@@ -178,5 +178,23 @@
     "context_hint": "Trigger 'critical_decision_generated' fired: 1 new pending approval(s)",
     "queued_at": "2026-08-10T12:20:16-03:00",
     "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-DD3400",
+    "job_key": "trigger:new_revenue_detected:2026-08-10T16:05:16-03:00",
+    "kind": "trigger",
+    "requires_ai_reasoning": true,
+    "context_hint": "Trigger 'new_revenue_detected' fired: ledger grew by 1 row(s)",
+    "queued_at": "2026-08-10T16:05:16-03:00",
+    "status": "queued"
+  },
+  {
+    "id": "JOB-20260810-FC3062",
+    "job_key": "trigger:human_execution_confirmation_received:2026-08-10T16:05:16-03:00",
+    "kind": "trigger",
+    "requires_ai_reasoning": true,
+    "context_hint": "Trigger 'human_execution_confirmation_received' fired: 1 new confirmation(s)",
+    "queued_at": "2026-08-10T16:05:16-03:00",
+    "status": "queued"
   }
 ]

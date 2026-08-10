@@ -21,5 +21,22 @@ A single incident belongs in a post-mortem, not here.
 
 ## Entries
 
-None yet. No decisions, experiments, or system changes have been recorded as of
-this writing (Phase 0, repository just initialized).
+### Sourcing business-model candidates from generic "top N ideas" web searches
+- First observed: 2026-08-10
+- Occurrences: 3 — see `context/knowledge/rejected-opportunities.md`
+  ("Generic AI agent governance starter kit", "Generic Brazilian
+  personal-finance/budget spreadsheet", "Brazilian investment capital-gains
+  / IR calculator tool"), all sourced via generic `WebSearch` queries like
+  "best micro-SaaS ideas 2026" and all killed for the same underlying
+  reason: they were crowded by competitors (free open-source, established
+  commercial players, or a free government tool respectively).
+- Pattern: an idea easy enough to surface in a two-second generic search is,
+  by construction, easy enough that others found and built it first. This
+  method is useful for confirming a *category* is viable (digital products
+  sell; personal-finance tools sell) but systematically bad at finding an
+  actual *gap* within that category.
+- System-improvement proposal: none yet (a process/method fix, not a code
+  fix). Next opportunity-research pass should weight narrow,
+  complaint-sourced or first-hand-observed pain points above listicle
+  brainstorming, and check competitive crowding *before* investing search
+  effort in fleshing out an idea's business case, not after.

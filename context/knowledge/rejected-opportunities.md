@@ -45,3 +45,52 @@ record when the evaluation was material enough to warrant one.
   governance, tested and journaled end to end — actually demonstrates that
   the general frameworks above don't cover). Not planned; noted here so a
   future cycle doesn't re-research the same dead end from zero.
+
+### Generic Brazilian personal-finance/budget spreadsheet (infoproduto)
+- Date: 2026-08-10
+- Category: digital product (template/spreadsheet)
+- Reason for rejection: `WebSearch` confirmed the category is real and
+  sellable on Hotmart/Eduzz/Kiwify (Brazilian infoproduct platforms,
+  R$30bi+ lifetime volume on Hotmart alone), but "planilha de controle
+  financeiro" is one of the most common, commoditized beginner-infoproduct
+  niches in that market (a real competing product, "Planilha de Controle
+  Financeiro 2026" by an established seller, surfaced in the very first
+  search result). No differentiated angle identified — rejected as too
+  generic/saturated to expect to stand out without a much more specific
+  hook. Killed at research stage, no build effort spent.
+- Decision record: none dedicated; logged here only.
+- Revisit condition: only with a genuinely narrow, differentiated sub-niche
+  within personal finance, not the generic budget-tracker framing.
+
+### Brazilian investment capital-gains / IR (income tax) calculator tool
+- Date: 2026-08-10
+- Category: digital product / tool
+- Reason for rejection: considered because it matches a real demonstrated
+  capability (this project's own ledger/tax-category logic) and initially
+  looked narrower than the generic finance-spreadgsheet idea. `WebSearch`
+  found the space is crowded by established players (Investidor10, Akeloo,
+  Nomad Global) *and*, more decisively, by a **free official tool**: the
+  Receita Federal + B3's "ReVar" calculator for renda-variável capital
+  gains tax. Competing against a free government-backed tool in the same
+  narrow niche is a very weak position. Also carries real legal/regulatory
+  caution (tax-calculation tools brush against `CRITICAL_DECISIONS.md`'s
+  "uncertain legal classification" trigger) that would need careful
+  disclaimer/positioning even if the market gap existed. Killed at research
+  stage, no build effort spent.
+- Decision record: none dedicated; logged here only.
+- Revisit condition: only if a specific sub-case is found that ReVar and
+  the established players genuinely don't cover well (e.g. a specific
+  instrument type or workflow gap) — not yet researched.
+
+## Pattern noticed across these three rejections
+
+All three candidates were sourced the same way: generic `WebSearch` for
+"best [category] ideas," which surfaces exactly the ideas most likely to
+already be crowded, precisely because they were easy enough to find in a
+two-second search that many others found them too. Broad listicle-sourced
+brainstorming is a weak method for finding an under-served niche; it is
+good at confirming a *category* is real (personal finance tools sell; solo
+digital products sell) but bad at finding a specific *gap* within it. Next
+research pass should shift method: look for narrow, specific, recurring
+complaints (e.g. in forums/communities for a target audience) rather than
+"top 10 ideas" listicles, even though that is slower.
