@@ -295,12 +295,12 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             )
             with patch("builtins.print"):
                 ca.cmd_request_approval(approval_args)
-            approval_path = list(ca.APPROVALS_PENDING_DIR.glob("*.md"))[0]
-            approval_id = approval_path.stem
-            text = approval_path.read_text(encoding="utf-8").replace(
-                "## Human decision\n\nPENDING", "## Human decision\n\nAPPROVED"
-            )
-            approval_path.write_text(text, encoding="utf-8")
+            approval_id = list(ca.APPROVALS_PENDING_DIR.glob("*.md"))[0].stem
+
+            with patch("builtins.print"):
+                ca.cmd_approve_decision(argparse.Namespace(
+                    approval_id=approval_id, human_statement="Yes, go ahead with this.",
+                ))
 
             with patch("builtins.print"):
                 ca.cmd_request_execution(_execution_args(
@@ -377,6 +377,52 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             content = ca.build_current_state()
             self.assertIn(request_id, content)
             self.assertIn("Pending Human Execution Requests", content)
+
+
+class ApprovalAuthenticationTests(unittest.TestCase):
+    def _create_pending_approval(self):
+        approval_args = argparse.Namespace(
+            title="t", category="c", amount=30.0, max_loss=30.0, thesis="thesis",
+            recurring=False, new_business_model=False, external_obligations=False,
+            legal_uncertainty=False, public_representation=False,
+            new_financial_write_access=False, policy_relaxation=False,
+        )
+        with patch("builtins.print"):
+            ca.cmd_request_approval(approval_args)
+        return list(ca.APPROVALS_PENDING_DIR.glob("*.md"))[0].stem
+
+    def test_approve_decision_quotes_human_statement_verbatim(self):
+        with sandbox():
+            approval_id = self._create_pending_approval()
+            with patch("builtins.print"):
+                ca.cmd_approve_decision(argparse.Namespace(
+                    approval_id=approval_id,
+                    human_statement="I approve this specific allocation.",
+                ))
+            content = (ca.APPROVALS_PENDING_DIR / f"{approval_id}.md").read_text(encoding="utf-8")
+            self.assertIn("APPROVED (interactive session, single-operator machine)", content)
+            self.assertIn("I approve this specific allocation.", content)
+            self.assertEqual(ca._approval_decision(approval_id), "APPROVED")
+
+    def test_reject_decision_quotes_human_statement_verbatim(self):
+        with sandbox():
+            approval_id = self._create_pending_approval()
+            with patch("builtins.print"):
+                ca.cmd_reject_decision(argparse.Namespace(
+                    approval_id=approval_id,
+                    human_statement="No, too risky right now.",
+                ))
+            content = (ca.APPROVALS_PENDING_DIR / f"{approval_id}.md").read_text(encoding="utf-8")
+            self.assertIn("REJECTED (interactive session, single-operator machine)", content)
+            self.assertIn("No, too risky right now.", content)
+            self.assertEqual(ca._approval_decision(approval_id), "REJECTED")
+
+    def test_approve_decision_refuses_unknown_approval_id(self):
+        with sandbox():
+            with self.assertRaises(SystemExit):
+                ca.cmd_approve_decision(argparse.Namespace(
+                    approval_id="APR-DOES-NOT-EXIST", human_statement="approve",
+                ))
 
 
 class StartHereReconstructionTests(unittest.TestCase):

@@ -95,6 +95,33 @@ Before authorization, persist the exact action, reason, capital required, maximu
 
 Approval is limited to the described action, amount, counterparty, duration and risk limits. It does not authorize larger, repeated or materially different actions.
 
+## Approval authentication
+
+`approvals/pending/<id>.md`'s `## Human decision` section has no
+cryptographic or out-of-band proof that a given edit was made by the human
+owner rather than by the AI operator itself — both have the same filesystem
+access. This is accepted, for now, under a narrow condition:
+
+**Interactive-session convention (current, single-operator-machine phase):**
+when the human owner is directly present in a live, interactive AI session
+on a machine only they control, and explicitly authorizes a decision in that
+conversation, the AI operator may record that as `APPROVED` using
+`python src/capital_agent.py approve-decision` (or `reject-decision`), which
+requires `--human-statement` — the human's own words, quoted verbatim — and
+timestamps the record. The resulting file states plainly that authorization
+was "captured via interactive session, single-operator machine," not
+inferred, not assumed from silence or prior context, and not extracted from
+untrusted external content.
+
+**This convention does not extend to unattended/scheduled operation.** Once
+`scheduler/` triggers an AI session with no human present to type a live
+authorization (Phase 2+), this mechanism provides no protection at all, and
+a stronger authentication method (signature, human-only channel, interactive
+prompt the AI cannot script) is required before it is used for anything with
+real money. See `context/knowledge/open-questions.md` — this remains open
+and must be resolved before the first Human Execution Request that depends
+on autonomous, unsupervised session triggering.
+
 ## Emergency risk-reduction exception
 
 The system may autonomously *decide and record* that an already-existing

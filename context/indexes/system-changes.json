@@ -22,5 +22,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-F9CEAA.md"
+  },
+  {
+    "id": "SYS-20260810-8E8A9C",
+    "date": "2026-08-10T11:21:34-03:00",
+    "title": "Formalize interactive-session approval authentication convention",
+    "class": "A",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260810-8E8A9C.md"
   }
 ]

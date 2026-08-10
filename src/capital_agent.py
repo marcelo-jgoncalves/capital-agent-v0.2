@@ -427,6 +427,53 @@ def cmd_request_approval(args):
     })
     print(json.dumps({"approval_id": approval_id, "status": "PENDING", "path": str(path), "criticality_reasons": reasons}, indent=2))
 
+def _record_human_decision(approval_id: str, decision: str, human_statement: str) -> Path:
+    """Write an APPROVED/REJECTED decision into approvals/pending/<id>.md,
+    quoting the human's own words verbatim per the interactive-session
+    approval-authentication convention (CRITICAL_DECISIONS.md 'Approval
+    authentication'). This does not, and cannot, cryptographically prove the
+    edit came from the human rather than the AI operator itself -- it only
+    standardizes an auditable record of what the human was told was said,
+    for a single-operator, interactive-session context. It must never be
+    used to represent an unattended/scheduled session as human-authorized.
+    """
+    path = APPROVALS_PENDING_DIR / f"{approval_id}.md"
+    if not path.exists():
+        raise SystemExit(f"no pending approval: {approval_id}")
+    text = path.read_text(encoding="utf-8")
+    marker = "## Human decision"
+    idx = text.find(marker)
+    if idx == -1:
+        raise SystemExit(f"approval record {approval_id} has no '## Human decision' section")
+    header = text[:idx]
+    record = (
+        f"{marker}\n\n"
+        f"{decision} (interactive session, single-operator machine)\n\n"
+        f"- Captured at: {now_iso()}\n"
+        f'- Human statement (verbatim): "{human_statement}"\n'
+    )
+    path.write_text(header + record, encoding="utf-8")
+    return path
+
+
+def cmd_approve_decision(args):
+    path = _record_human_decision(args.approval_id, "APPROVED", args.human_statement)
+    append_index("approvals", {
+        "id": args.approval_id, "date": now_iso(), "status": "APPROVED",
+        "path": f"approvals/pending/{path.name}",
+    })
+    print(json.dumps({"approval_id": args.approval_id, "status": "APPROVED", "path": str(path)}, indent=2))
+
+
+def cmd_reject_decision(args):
+    path = _record_human_decision(args.approval_id, "REJECTED", args.human_statement)
+    append_index("approvals", {
+        "id": args.approval_id, "date": now_iso(), "status": "REJECTED",
+        "path": f"approvals/pending/{path.name}",
+    })
+    print(json.dumps({"approval_id": args.approval_id, "status": "REJECTED", "path": str(path)}, indent=2))
+
+
 def _approval_decision(approval_id: str) -> str:
     """Return APPROVED / REJECTED / PENDING / UNKNOWN by reading the approval
     record's 'Human decision' section. Checks both pending and archive so an
@@ -884,6 +931,16 @@ def build_parser():
     ar.add_argument("--new-financial-write-access", action="store_true")
     ar.add_argument("--policy-relaxation", action="store_true")
     ar.set_defaults(func=cmd_request_approval)
+
+    ad = sub.add_parser("approve-decision", help="Record human APPROVED (interactive session convention; see CRITICAL_DECISIONS.md).")
+    ad.add_argument("--approval-id", required=True)
+    ad.add_argument("--human-statement", required=True, help="The human's own words, verbatim, authorizing this decision.")
+    ad.set_defaults(func=cmd_approve_decision)
+
+    rd = sub.add_parser("reject-decision", help="Record human REJECTED (interactive session convention; see CRITICAL_DECISIONS.md).")
+    rd.add_argument("--approval-id", required=True)
+    rd.add_argument("--human-statement", required=True, help="The human's own words, verbatim, rejecting this decision.")
+    rd.set_defaults(func=cmd_reject_decision)
 
     uc = sub.add_parser("update-context")
     uc.set_defaults(func=cmd_update_context)

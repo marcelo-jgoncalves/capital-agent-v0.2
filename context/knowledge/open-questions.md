@@ -44,25 +44,28 @@ AI operator does not have to rediscover them from scratch.
 
 ### How should a critical-decision approval be authenticated as genuinely human?
 - Raised: 2026-08-10 (Phase 0 readiness audit, `journal/reviews/phase0-readiness.md`).
-- Why it matters: `approvals/pending/<id>.md`'s `## Human decision` section is a
-  plain text field. `capital_agent.py request-execution` correctly refuses to
-  proceed unless it reads `APPROVED` there (verified by
-  `tests/test_custody_and_execution.py`), but nothing in the current
-  filesystem-only trust model stops any process with write access to the
-  repository — including an AI operator with a bug or a compromised
-  session — from writing `APPROVED` into that file itself, since there is no
-  out-of-band channel, signature, or separate human-only write path. No CLI
-  command sets that string today (verified: `grep -n APPROVED
-  src/capital_agent.py` shows it only ever being read, never written by code),
-  so this requires a positive act of editing the file by hand — but that act
-  is not technically distinguishable between "the human owner did it" and "the
-  AI operator did it." This is a structural limitation of Phase 0, not a bug
-  introduced by any specific change.
-- What would resolve it: a stronger authentication mechanism before Phase 2
-  relies on this for real money — options include a human-only local script
-  requiring interactive confirmation (e.g. a typed phrase or OS-level prompt)
-  that the AI cannot script around, requiring the approval commit to be
-  signed with a key the AI never has access to, or moving approvals to a
-  channel entirely outside the repository (e.g. a message the human sends
-  through a separate authenticated system). Needs a human decision on
-  acceptable friction before Phase 2's first real Human Execution Request.
+- Partially resolved: 2026-08-10. The human owner confirmed only they have
+  access to the operating machine and accepted the interactive-session
+  convention as sufficient for now, with the explicit intent to strengthen it
+  later if the experiment proceeds. Implemented `approve-decision` /
+  `reject-decision` (`src/capital_agent.py`), which record the human's
+  literal statement plus a timestamp, and documented the convention's scope
+  in `CRITICAL_DECISIONS.md` "Approval authentication" and `HUMAN_GATES.md`
+  Gate H7.
+- Why it still matters (not fully resolved): the underlying limitation is
+  unchanged — nothing cryptographically distinguishes a human-typed
+  authorization from an AI-fabricated one, since both edit the same file with
+  the same access. What changed is that this is now an *accepted, documented,
+  human-confirmed* trade-off scoped to "single-operator machine, interactive
+  session only," rather than a silent gap. It explicitly does **not** cover
+  unattended/scheduled sessions (`scheduler/`) — there is no human present to
+  type an authorization in that case, so this convention provides no
+  protection there.
+- What would resolve it fully: before any Human Execution Request is
+  triggered by an unattended/scheduled session (Phase 2+ with the scheduler
+  actually initiating AI sessions rather than just queuing tickets for a
+  human-launched one), replace or supplement this with a stronger mechanism —
+  a human-only interactive confirmation the AI cannot script around, a signed
+  approval the AI never has the key for, or an approval channel entirely
+  outside the repository. Revisit this decision if the operating machine ever
+  gains additional users/access.

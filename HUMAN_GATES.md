@@ -103,3 +103,7 @@ Critical-decision authorization and financial execution are two separate
 events (`ARCHITECTURE.md`). Authorizing a critical decision never itself moves
 money; if the decision involves real money, a Human Execution Request still
 follows, and only the human's confirmed execution updates the ledger.
+
+Authorization must be authenticated as genuinely the human's — see
+`CRITICAL_DECISIONS.md` "Approval authentication" for the current
+interactive-session convention and its limits.
