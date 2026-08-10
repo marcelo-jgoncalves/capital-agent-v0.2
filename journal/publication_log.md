@@ -240,3 +240,34 @@ verdade, é exatamente a diferenciação que faltava.
 Referências: `journal/system_changes/SYS-20260810-A54ECC.md`,
 `journal/decisions/DEC-20260810-C5EA4F.md` (Addendums 2 e 3),
 `experiments/drafts/nfse-mei-guide-outline.md`.
+
+### 2026-08-10 (continuação) — Rascunho pronto, e uma pausa que não é derrota
+
+O guia foi escrito até o fim: sete seções, cada fato batido em fonte
+primária, o achado da multa municipal (não nacional) apresentado como o
+diferencial do texto em vez de escondido numa nota de rodapé. Antes de
+qualquer publicação, uma pergunta direta do dono do projeto: "você precisa
+de fato da minha revisão?" A resposta, honesta, não foi "porque a regra
+manda" — foram três razões concretas: só ele pode criar a conta de venda,
+a responsabilidade legal do conteúdo recai sobre a pessoa real por trás
+dela, e uma segunda leitura humana reduz risco de verdade, independente
+de qualquer gate.
+
+E então, depois de ver o rascunho pronto, a resposta foi colocar a ideia
+em espera: "não tenho conhecimentos suficientes para garantir que não
+cometeríamos erros no conteúdo." Essa frase importa registrar exatamente
+como foi dita, porque não é uma rejeição por falta de mercado ou por erro
+de pesquisa — a pesquisa segurou até o fim. É uma decisão consciente sobre
+o próprio limite de conforto com o assunto, tomada por quem carrega a
+responsabilidade real se algo sair errado. Isso virou lição registrada:
+rigor de verificação por parte da IA não substitui o conforto de domínio
+de quem vai publicar em seu próprio nome — são duas coisas diferentes, e
+só a segunda é decisão de quem assina.
+
+O rascunho fica guardado, não descartado. Se a mesma característica que
+tornou essa ideia interessante — gatilho real e recente, nicho não
+minerado, baixo trabalho contínuo — aparecer de novo numa categoria sem
+risco regulatório, o padrão de pesquisa que funcionou aqui continua valendo.
+
+Referências: `journal/decisions/DEC-20260810-C5EA4F.md` (Addendum 5),
+`context/knowledge/lessons.md`, `context/knowledge/open-questions.md`.

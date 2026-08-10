@@ -39,3 +39,25 @@ this file with generic advice that has no evidentiary source.
 - Applies to: every future business-model comparison in a decision record —
   explicitly ask "who performs the ongoing work once this launches," not
   only "does this pass policy and capital-efficiency checks."
+
+### Fact-verification rigor does not substitute for the human owner's own domain comfort on regulated content
+- Date: 2026-08-10
+- Source: `journal/decisions/DEC-20260810-C5EA4F.md` Addendum 5 (NFS-e/MEI
+  guide put on standby by the human owner after a complete, primary-source-
+  verified draft was written — not rejected on evidence, but on the human
+  owner's own risk tolerance: "não tenho conhecimentos suficientes para
+  garantir que não cometeríamos erros no conteúdo").
+- Lesson: for content published under the human owner's identity in a
+  regulated/compliance-adjacent domain (tax, legal, financial obligations
+  affecting third parties), the agent's careful primary-source verification
+  narrows error risk but does not, by itself, clear the bar for publishing
+  — the human owner's own subject-matter comfort is a separate, necessary
+  condition, because they carry the identifiable legal/reputational
+  exposure, not the agent. This is not a reason to avoid regulated-content
+  candidates outright, but it means this category has a materially higher
+  bar to actually reach publication than a purely organizational/how-to
+  product with no compliance stakes would.
+- Applies to: weigh this explicitly, before investing drafting effort,
+  when a candidate opportunity involves publishing compliance/regulatory
+  content — flag the domain early and gauge risk tolerance sooner, rather
+  than only surfacing it once a full draft already exists.

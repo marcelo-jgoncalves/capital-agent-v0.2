@@ -34,5 +34,14 @@
     "amount_brl": 0.0,
     "status": "OBSERVE_PREPARE",
     "path": "journal/decisions/DEC-20260810-C5EA4F.md"
+  },
+  {
+    "id": "DEC-20260810-C5EA4F",
+    "date": "2026-08-10T17:15:00-03:00",
+    "title": "NFS-e/MEI guide put on standby by human owner (risk-tolerance decision, not a research failure)",
+    "category": "strategy",
+    "amount_brl": 0.0,
+    "status": "STANDBY",
+    "path": "journal/decisions/DEC-20260810-C5EA4F.md"
   }
 ]

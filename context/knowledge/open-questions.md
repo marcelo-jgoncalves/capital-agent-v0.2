@@ -108,3 +108,21 @@ AI operator does not have to rediscover them from scratch.
   unless the human owner has said so in the interim.
 - What would resolve it: only an explicit future signal from the human
   owner in conversation. Nothing to do until then.
+
+### NFS-e/MEI guide — on standby by explicit human owner decision
+- Raised: 2026-08-10 (`DEC-20260810-C5EA4F`).
+- Status: **on hold**, not killed. A complete, primary-source-verified
+  draft exists (`experiments/drafts/nfse-mei-guide-draft-v1.md`). The
+  human owner chose not to proceed toward publication: "não tenho
+  conhecimentos suficientes para garantir que não cometeríamos erros no
+  conteúdo." This is a risk-tolerance decision on regulated content, not a
+  finding that the opportunity itself was weak — see
+  `context/knowledge/lessons.md` for the generalized lesson.
+- Why it matters: a future AI session should not restart this from zero,
+  and should not assume it was rejected on evidence — the research and
+  draft remain valid reference material if the human owner ever revisits
+  it, or if the same underlying pattern (narrow, timely, non-crowded gap)
+  is found again in a lower-liability, non-regulated content category.
+- What would resolve it: the human owner explicitly reopening it, or a
+  different candidate in the same pattern but without compliance/legal
+  stakes.
