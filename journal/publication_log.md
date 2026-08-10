@@ -207,3 +207,36 @@ oficial (gov.br/Receita Federal), não em posts de blog secundários, antes
 de escrever qualquer linha do guia.
 
 Referências: `journal/decisions/DEC-20260810-C5EA4F.md`.
+
+### 2026-08-10 (continuação) — Antes de continuar, uma pergunta sobre aprender com o processo
+
+O dono do projeto interrompeu a pesquisa com uma pergunta que não era
+sobre a ideia de negócio, era sobre o processo em si: "temos alguma
+maneira de aprender no processo, qual quer que seja ele? você acabou de
+tomar decisões importantes e mudar a rota. isso melhorou o resultado."
+
+A resposta honesta foi "parcialmente". Os arquivos de conhecimento
+(`context/knowledge/`) já existiam e já tinham capturado os aprendizados
+da sessão em tempo real — mas nada obrigava consultá-los antes de começar
+de novo. Era perfeitamente possível repetir o mesmo erro pela quarta vez.
+Isso virou uma correção real e pequena: um comando (`knowledge-check`) que
+imprime os três arquivos relevantes de uma vez, e uma exigência explícita
+no manual de operação para rodá-lo antes de qualquer nova pesquisa de
+oportunidade. Não é travado por código — seria possível pular mesmo assim
+— mas agora é uma linha de comando em vez de uma desculpa de "esqueci de
+olhar três arquivos".
+
+Só depois disso a pesquisa do NFS-e continuou. A verificação em fonte
+primária (não mais busca genérica, agora leitura direta do gov.br e da Lei
+Complementar 123/2006) confirmou o núcleo da regra do MEI e revelou algo
+que nenhuma fonte secundária mencionou: a penalidade por não emitir NFS-e
+provavelmente não é um número nacional único — é matéria municipal, porque
+a NFS-e documenta o ISS, um imposto de competência do município. Os
+números de "5%" ou "75%" que circulam por aí provavelmente vieram da
+legislação de uma cidade específica, citados sem esse contexto. É provável
+que o próprio conteúdo concorrente esteja errado nesse ponto — o que, se
+verdade, é exatamente a diferenciação que faltava.
+
+Referências: `journal/system_changes/SYS-20260810-A54ECC.md`,
+`journal/decisions/DEC-20260810-C5EA4F.md` (Addendums 2 e 3),
+`experiments/drafts/nfse-mei-guide-outline.md`.
