@@ -2,12 +2,20 @@
   "id": "EXP-20260810-1F7147",
   "created_at": "2026-08-10T11:56:49-03:00",
   "title": "Validate demand for a paid AI/AWS engineering micro-offer",
-  "hypothesis": "A narrowly scoped, fixed-price offer (e.g. a paid AWS/AI architecture quick-review or similar productized service) tied to the human owner's existing consulting/blog positioning generates paid interest beyond organic traffic when boosted with a small paid test, validating a growth vector that does not compete for the BRL 100 single-position capital ceiling that caps market-based strategies at current equity.",
+  "hypothesis": "A narrowly scoped, fixed-price offer (e.g. a paid AWS/AI architecture quick-review or similar productized service) tied to the human owner's existing AI/AWS/DevOps consulting expertise generates paid interest when boosted with a small paid test, validating a growth vector that does not compete for the BRL 100 single-position capital ceiling that caps market-based strategies at current equity.",
   "budget_brl": 20.0,
   "max_loss_brl": 20.0,
   "success_metric": "At least 1 paid conversion OR at least 5 qualified inbound leads (explicit interest, reply, or booking) within 14 days of launch.",
   "kill_condition": "Fewer than 2 qualified signals within 14 days despite the test budget being fully spent.",
   "status": "planned",
   "policy_issues": [],
-  "cash_flows": []
+  "cash_flows": [],
+  "revisions": [
+    {
+      "date": "2026-08-10T12:10:00-03:00",
+      "change": "Removed dependency on the blog as the landing destination: human owner confirmed the blog is not yet ready and cannot serve as a lead-capture channel right now. Original hypothesis referenced 'organic traffic' and 'blog positioning' as the baseline; both assumed a working blog funnel.",
+      "revised_plan": "Point the small paid test at a minimal, standalone offer page (not the blog) -- e.g. a single Carrd/Notion/one-pager page or a direct booking link (Calendly-style) describing one fixed-price service, plus a short paid post/ad on a channel with existing professional reach (e.g. LinkedIn). This keeps the experiment capital-light and fast to launch without depending on the blog's completion, and still tests the real question: does the underlying offer generate paid interest, independent of which page hosts it.",
+      "still_open": "Exact page tool and ad channel not yet chosen -- this is an execution detail for whoever builds the experiment, not a strategic decision requiring further capital-allocation analysis."
+    }
+  ]
 }
