@@ -148,6 +148,9 @@ reading (`AI_OPERATING_MANUAL.md`).
   Execution Request lifecycle, scheduler.
 - `ROADMAP.md` — phases, exit criteria, milestones. No phase ever introduces
   autonomous financial execution.
+- `journal/publication_log.md` — narrative log kept for turning this
+  project into a publication/series; not canonical state or governance, not
+  loaded by default, only relevant when the task is publication content.
 
 ## 9. Autonomous operation
 
