@@ -157,7 +157,7 @@ def append_ledger(typ: str, category: str, amount: float, description: str, refe
         w.writerow([now_iso(), typ, category, f"{amount:.2f}", description, reference])
 
 
-def policy_check_proposal(amount: float) -> list[str]:
+def policy_check_proposal(amount: float, is_reserve_instrument: bool = False) -> list[str]:
     policy = load_policy()
     equity = current_equity_floor()
     cash = cash_balance()
@@ -167,9 +167,14 @@ def policy_check_proposal(amount: float) -> list[str]:
         issues.append("amount must be greater than zero")
         return issues
 
-    max_single = equity * float(policy["max_single_live_allocation_pct_equity"])
+    if is_reserve_instrument and "max_single_reserve_instrument_pct_equity" in policy:
+        max_single = equity * float(policy["max_single_reserve_instrument_pct_equity"])
+        limit_label = "reserve-instrument allocation limit"
+    else:
+        max_single = equity * float(policy["max_single_live_allocation_pct_equity"])
+        limit_label = "single-allocation limit"
     if amount > max_single:
-        issues.append(f"amount exceeds single-allocation limit ({max_single:.2f} BRL)")
+        issues.append(f"amount exceeds {limit_label} ({max_single:.2f} BRL)")
 
     min_reserve = equity * float(policy["min_cash_reserve_pct_equity"])
     if cash - amount < min_reserve:
@@ -536,7 +541,7 @@ def cmd_request_execution(args):
             "controlled by the human owner)."
         )
 
-    issues = policy_check_proposal(args.max_total_capital)
+    issues = policy_check_proposal(args.max_total_capital, is_reserve_instrument=args.reserve_instrument)
     if issues:
         raise SystemExit("refused: policy check failed: " + "; ".join(issues))
 
@@ -583,6 +588,7 @@ def cmd_request_execution(args):
         "expected_upside": args.expected_upside,
         "maximum_plausible_loss": round(args.max_loss, 2),
         "critic_assessment": args.critic_assessment,
+        "reserve_instrument_claimed": args.reserve_instrument,
         "policy_status": "PASSED",
         "critical_decision": critical,
         "criticality_reasons": reasons,
@@ -1028,6 +1034,10 @@ def build_parser():
     re_.add_argument("--decision-id", default=None)
     re_.add_argument("--approval-id", default=None)
     re_.add_argument("--destination-controlled-by-human", action="store_true")
+    re_.add_argument("--reserve-instrument", action="store_true",
+                      help="Explicit, audited claim that this purchase is a low-risk reserve "
+                           "instrument (e.g. Tesouro Selic), unlocking max_single_reserve_instrument_pct_equity "
+                           "instead of the tighter max_single_live_allocation_pct_equity.")
     re_.add_argument("--recurring", action="store_true")
     re_.add_argument("--new-business-model", action="store_true")
     re_.add_argument("--external-obligations", action="store_true")

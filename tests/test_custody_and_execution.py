@@ -39,6 +39,7 @@ POLICY = {
     "leverage_allowed": False,
     "withdrawals_allowed": False,
     "max_single_live_allocation_pct_equity": 0.5,
+    "max_single_reserve_instrument_pct_equity": 0.3,
     "max_total_experimental_capital_pct_equity": 0.3,
     "max_daily_new_risk_pct_equity": 0.5,
     "max_recurring_monthly_commitment_pct_equity": 0.05,
@@ -140,7 +141,7 @@ def _execution_args(**overrides):
         action="BUY", asset="TEST", quantity=2.0, max_price=5.0, max_total_capital=10.0,
         valid_until="2099-01-01T00:00:00-03:00", reason="test", expected_upside="test",
         max_loss=10.0, critic_assessment="test critic", decision_id=None, approval_id=None,
-        destination_controlled_by_human=False, recurring=False, new_business_model=False,
+        destination_controlled_by_human=False, reserve_instrument=False, recurring=False, new_business_model=False,
         external_obligations=False, legal_uncertainty=False, public_representation=False,
         new_financial_write_access=False, policy_relaxation=False,
     )
@@ -316,6 +317,43 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
         with sandbox():
             with self.assertRaises(SystemExit):
                 ca.cmd_request_execution(_execution_args(action="TRANSFER", destination_controlled_by_human=False))
+
+    def test_reserve_instrument_flag_unlocks_higher_cap(self):
+        with sandbox():
+            # Real-world case this closes: Tesouro Selic's minimum lot
+            # (BRL 196.64) exceeded the general single-allocation cap before
+            # this policy addition. Confirms a reserve-flagged request for
+            # that amount is accepted (after approval, since it's still
+            # above the non-critical threshold) and the claim is persisted.
+            approval_args = argparse.Namespace(
+                title="reserve test", category="reserve-management", amount=196.64, max_loss=1.0,
+                thesis="test", recurring=False, new_business_model=False, external_obligations=False,
+                legal_uncertainty=False, public_representation=False,
+                new_financial_write_access=False, policy_relaxation=False,
+                new_readonly_financial_adapter=False,
+            )
+            with patch("builtins.print"):
+                ca.cmd_request_approval(approval_args)
+            approval_id = list(ca.APPROVALS_PENDING_DIR.glob("*.md"))[0].stem
+            with patch("builtins.print"):
+                ca.cmd_approve_decision(argparse.Namespace(approval_id=approval_id, human_statement="approved"))
+
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args(
+                    action="BUY", asset="Tesouro Selic", max_total_capital=196.64, max_loss=1.0,
+                    reserve_instrument=True, approval_id=approval_id,
+                ))
+            data = json.loads(list(ca.HR_PENDING_DIR.glob("*.json"))[0].read_text(encoding="utf-8"))
+            self.assertTrue(data["reserve_instrument_claimed"])
+
+    def test_reserve_instrument_cap_still_enforced(self):
+        with sandbox():
+            # reserve cap is 0.3 * 1000 = 300; 350 must still be refused even flagged,
+            # failing at the policy-check stage before criticality is even reached.
+            with self.assertRaises(SystemExit):
+                ca.cmd_request_execution(_execution_args(
+                    max_total_capital=350.0, max_loss=1.0, reserve_instrument=True,
+                ))
 
     def test_confirm_execution_is_the_only_path_to_completed_and_ledger_update(self):
         with sandbox():

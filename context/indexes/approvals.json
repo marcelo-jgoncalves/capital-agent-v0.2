@@ -40,5 +40,11 @@
     "max_loss_brl": 0.0,
     "status": "PENDING",
     "path": "approvals/pending/APR-20260810-3DF0B2.md"
+  },
+  {
+    "id": "APR-20260810-3DF0B2",
+    "date": "2026-08-10T15:47:03-03:00",
+    "status": "APPROVED",
+    "path": "approvals/archive/APR-20260810-3DF0B2.md"
   }
 ]

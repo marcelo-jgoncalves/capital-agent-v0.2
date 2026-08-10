@@ -12,6 +12,7 @@
   "leverage_allowed": false,
   "withdrawals_allowed": false,
   "max_single_live_allocation_pct_equity": 0.1,
+  "max_single_reserve_instrument_pct_equity": 0.3,
   "max_total_experimental_capital_pct_equity": 0.3,
   "max_daily_new_risk_pct_equity": 0.1,
   "max_recurring_monthly_commitment_pct_equity": 0.05,

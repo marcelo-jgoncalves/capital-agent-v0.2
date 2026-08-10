@@ -62,5 +62,13 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-B3962E.md"
+  },
+  {
+    "id": "SYS-20260810-EBED61",
+    "date": "2026-08-10T15:49:42-03:00",
+    "title": "Add differentiated allocation cap for low-risk reserve instruments",
+    "class": "C",
+    "status": "PROPOSED_HUMAN_APPROVAL_REQUIRED",
+    "path": "journal/system_changes/SYS-20260810-EBED61.md"
   }
 ]
