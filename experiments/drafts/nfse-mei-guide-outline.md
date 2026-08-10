@@ -33,10 +33,17 @@ não solicitada.
    de contribuinte, não uma nova regra para o MEI (cuja obrigação já é de
    2023) — esse é o ponto de maior risco de confusão encontrado na
    pesquisa, então merece destaque, não uma nota de rodapé.
-6. **O que acontece se eu não emitir** — dizer que existem penalidades
-   reais e que podem ser severas, sem cravar um número não verificado;
-   direcionar para o texto oficial da Resolução CGSN 169/2022 e para um
-   contador para o caso específico do leitor.
+6. **O que acontece se eu não emitir** — a NFS-e documenta o ISS, que é
+   imposto **municipal**; não existe uma multa nacional única (verificado:
+   a Lei Complementar 123/2006 traz multas para outras situações — falta
+   de comunicação de exclusão do Simples, cancelamento automático do MEI
+   após 12 meses sem recolhimento — mas nenhuma multa nacional específica
+   para "não emitir NFS-e"). Números como "5%" ou "75%" que circulam por
+   aí provavelmente vêm da legislação de um município específico, citados
+   sem esse contexto. O guia vai explicar isso corretamente e direcionar
+   o leitor para a lei do ISS da própria prefeitura ou um contador — isso
+   é mais preciso do que a maioria do conteúdo concorrente, que
+   provavelmente cita um número errado como se fosse universal.
 7. **Onde emitir de verdade** — link direto para gov.br/nfse, sem
    intermediário, deixando claro que o guia não substitui o site oficial,
    só organiza o que ele não deixa claro sozinho.
@@ -48,11 +55,15 @@ não solicitada.
   01/09/2023).
 - Resolução CGSN nº 189/2026 (migração ME/EPP, 01/09/2026 — categoria
   diferente).
+- Lei Complementar nº 123/2006 (Estatuto Nacional da Microempresa e da
+  Empresa de Pequeno Porte) — verificado que não traz multa nacional
+  específica para não emitir NFS-e; penalidade é municipal (ISS).
 
 ## Pendente antes de qualquer versão final
 
-- Confirmar o texto exato de penalidade na fonte primária (Estatuto do MEI
-  ou texto da própria resolução), não só em blog secundário.
+- ~~Confirmar o texto exato de penalidade na fonte primária~~ —
+  resolvido: não existe multa nacional única; é matéria municipal (ISS).
+  Guia já reflete isso.
 - Revisão do dono do projeto antes de qualquer publicação (gate crítico já
   identificado em `DEC-20260810-C5EA4F`).
 - Definir formato final (PDF curto, página única, ou infoproduto vendável)
