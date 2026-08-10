@@ -131,3 +131,40 @@ Referências: `journal/decisions/DEC-20260810-A032A0.md`,
 `journal/system_changes/SYS-20260810-EBED61.md`,
 `approvals/archive/APR-20260810-FDD418.md`,
 `execution/human_requests/completed/HER-20260810-544DBF.json`.
+
+### 2026-08-10 (continuação) — Três ideias mortas, e um erro de método descoberto por repetição
+
+Com o dinheiro de fato investido e o registro de história criado, a busca
+pelo vetor de crescimento continuou — e tropeçou três vezes seguidas do
+mesmo jeito, o que acabou sendo o achado mais interessante da sessão.
+
+A primeira ideia (kit genérico de governança de agentes de IA) já tinha
+caído antes, derrubada por concorrentes gratuitos de peso (Microsoft,
+NVIDIA, Meta). A busca continuou com duas outras: uma planilha de controle
+financeiro brasileira — categoria real e vendável (o mercado de
+infoprodutos no Hotmart já passou de R$30 bilhões em volume histórico),
+mas um nicho tão comum entre iniciantes que a primeira busca já trouxe um
+concorrente estabelecido vendendo exatamente a mesma coisa. E uma
+calculadora de imposto de renda sobre ganho de capital em investimentos —
+essa parecia mais forte por aproveitar uma capacidade real já demonstrada
+neste próprio projeto (lógica de ledger e categorização fiscal), mas
+esbarrou em algo pior que concorrência comercial: uma ferramenta gratuita
+oficial da Receita Federal em parceria com a B3, a calculadora "ReVar".
+
+As três ideias morreram na fase de pesquisa, sem nenhum esforço de
+construção gasto — exatamente onde uma ideia fraca deve morrer. Mas a
+repetição revelou o problema de verdade: as três vieram de buscas
+genéricas tipo "melhores ideias de [categoria]" — e qualquer coisa fácil o
+bastante para aparecer numa busca de dois segundos já foi encontrada e
+ocupada por alguém antes. Esse padrão foi registrado formalmente em
+`context/knowledge/recurring-errors.md` como um erro de método, não de
+execução: bom para confirmar que uma categoria existe, ruim para achar uma
+brecha real dentro dela.
+
+O próximo passo, ainda em aberto ao fim desta sessão, é mudar de método:
+procurar reclamações específicas e recorrentes em vez de listas prontas —
+mais lento, mas é o que de fato separa uma ideia vazia de uma com mercado
+real por trás.
+
+Referências: `context/knowledge/rejected-opportunities.md`,
+`context/knowledge/recurring-errors.md`.
