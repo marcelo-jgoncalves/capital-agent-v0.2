@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "HER-20260810-5961BE",
+    "created_at": "2026-08-10T12:29:27-03:00",
+    "action": "BUY",
+    "asset": "Tesouro Selic",
+    "max_total_capital_brl": 100.0,
+    "status": "pending",
+    "path": "execution/human_requests/pending/HER-20260810-5961BE.json"
+  }
+]

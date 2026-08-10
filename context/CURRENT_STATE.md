@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T12:20:49-03:00
+- Generated at: 2026-08-10T12:30:13-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -34,7 +34,7 @@ None recorded. No financial write adapter exists or ever will under this archite
 
 ## Pending Human Execution Requests (execution/human_requests/pending/)
 
-None. No financial execution is currently waiting on the human owner.
+- HER-20260810-5961BE: BUY Tesouro Selic — max_total_capital=BRL 100.0, critical=True, valid_until=2026-08-17T23:59:00-03:00
 
 ## Active experiments
 
