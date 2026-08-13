@@ -259,6 +259,64 @@ class ExternalCashEventTests(BusinessIntegrationTestCase):
         self.assertEqual(len(calls), 1)  # second call is a no-op
         self.assertEqual(ev2["state"], "LEDGER_POSTED")
 
+    # -- P1 #3 canonical-state posting (prompt-hardening-final section 5) --
+
+    def _reconciled_event(self, amount_brl=100.0):
+        ev = self._reported_event()
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="Confirmed")
+        ev = bi.attribute_external_cash_event(ev)
+        ev = bi.reconcile_external_cash_event(ev, reconciled_by="human:owner")
+        return ev
+
+    def test_caller_amount_divergence_does_not_alter_ledger(self):
+        ev = self._reconciled_event(amount_brl=100.0)
+        tampered = dict(ev)
+        tampered["amount_brl"] = 999999.0
+        calls = []
+        posted = bi.post_external_cash_event_to_ledger(tampered, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(calls[0][2], 100.0)  # amount arg posted is the canonical one
+        self.assertEqual(posted["amount_brl"], 100.0)
+
+    def test_caller_kind_divergence_is_rejected_or_ignored(self):
+        ev = self._reconciled_event()
+        tampered = dict(ev)
+        tampered["kind"] = "refund"
+        calls = []
+        bi.post_external_cash_event_to_ledger(tampered, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(calls[0][0], bi.CASH_EVENT_KIND_TO_LEDGER_TYPE["revenue"])  # canonical kind used
+
+    def test_caller_source_divergence_does_not_alter_ledger(self):
+        ev = self._reconciled_event()
+        tampered = dict(ev)
+        tampered["source_system"] = "adulterated-source"
+        calls = []
+        bi.post_external_cash_event_to_ledger(tampered, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertNotIn("adulterated-source", calls[0][3])
+        self.assertIn(ev["source_system"], calls[0][3])
+
+    def test_caller_idempotency_key_divergence_does_not_alter_posting(self):
+        ev = self._reconciled_event()
+        tampered = dict(ev)
+        tampered["idempotency_key"] = "forged:key:x"
+        calls = []
+        bi.post_external_cash_event_to_ledger(tampered, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(calls[0][4], ev["idempotency_key"])  # canonical reference used, not the forged one
+
+    def test_stale_expected_state_fails_explicitly(self):
+        ev = self._reconciled_event()
+        stale = dict(ev)
+        stale["state"] = "VERIFIED"  # caller thinks it's still VERIFIED (stale copy)
+        with self.assertRaises(bi.CashEventStateError):
+            bi.post_external_cash_event_to_ledger(stale, append_ledger_fn=lambda *a: None)
+
+    def test_correct_state_uses_exclusively_persisted_data(self):
+        ev = self._reconciled_event()
+        minimal = {"id": ev["id"], "state": ev["state"]}  # no financial fields at all
+        calls = []
+        posted = bi.post_external_cash_event_to_ledger(minimal, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(posted["amount_brl"], ev["amount_brl"])
+        self.assertEqual(len(calls), 1)
+
     def test_attribution_can_be_explicit_and_unknown(self):
         ev = self._reported_event()
         ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="Confirmed")
@@ -403,6 +461,64 @@ class MetricObservationTests(BusinessIntegrationTestCase):
         self.assertGreaterEqual(obs["retrieved_at"], "2026-08-13T00:00:00Z")
         filtered = bi.filter_official_evaluation_observations([obs], activation_date="2026-08-13T00:00:00Z")
         self.assertEqual(filtered, [])
+
+    # -- P1 #4 timezone-aware comparisons (prompt-hardening-final section 6) --
+
+    def test_equivalent_instants_with_different_offsets_are_eligible(self):
+        # 2026-08-09T21:00:00-03:00 == 2026-08-10T00:00:00+00:00 (same instant).
+        # Lexical string comparison of these two would wrongly disagree.
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="m", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage="full", data_quality="observed",
+            observed_at="2026-08-09T21:00:00-03:00",
+        )
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-10T00:00:00+00:00",
+        )
+        self.assertEqual(filtered, [obs])  # equal instant -> "on activation date" -> eligible
+
+    def test_utc_vs_local_offset_boundary(self):
+        obs_before = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="m", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage="full", data_quality="observed",
+            observed_at="2026-08-09T20:59:59-03:00",  # = 2026-08-13T23:59:59Z, before activation
+        )
+        obs_after = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="m", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage="full", data_quality="observed",
+            observed_at="2026-08-09T21:00:01-03:00",  # = 2026-08-10T00:00:01Z, after activation
+        )
+        filtered = bi.filter_official_evaluation_observations(
+            [obs_before, obs_after], activation_date="2026-08-10T00:00:00Z",
+        )
+        self.assertEqual(filtered, [obs_after])
+
+    def test_boundary_equal_to_activation_date_is_eligible(self):
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="m", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage="full", data_quality="observed",
+            observed_at="2026-08-10T00:00:00Z",
+        )
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-10T00:00:00Z",
+        )
+        self.assertEqual(filtered, [obs])
+
+    def test_invalid_observed_at_timestamp_excluded_not_crashed(self):
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="m", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage="full", data_quality="observed",
+        )
+        obs["observed_at"] = "not-a-real-timestamp"
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-10T00:00:00Z",
+        )
+        self.assertEqual(filtered, [])  # excluded explicitly, no exception
 
     def test_invalid_environment_rejected(self):
         with self.assertRaises(bi.MetricObservationError):
@@ -729,6 +845,69 @@ class LedgerLockRecoveryTests(BusinessIntegrationTestCase):
         lock_path.unlink()
 
 
+class WriteJsonIdempotentRaceTests(BusinessIntegrationTestCase):
+    """P2 (prompt-hardening-final-capital-agent-v0.2.md section 9):
+    _write_json_idempotent must not let two concurrent callers with the same
+    idempotency_key both write a record."""
+
+    def test_two_concurrent_equivalent_calls_write_exactly_one_record(self):
+        barrier = threading.Barrier(8)
+        results = []
+        results_lock = threading.Lock()
+
+        def worker(i):
+            barrier.wait()
+            record = {"idempotency_key": "race-key-1", "payload": "same-content", "n": i}
+            got, created = bi._write_json_idempotent(
+                bi.BUSINESS_SIGNALS_DIR, f"REC-{i}", "race-key-1", record
+            )
+            with results_lock:
+                results.append((got, created))
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Exactly one caller created the record; every caller (including the
+        # winner) returns the same idempotency_key.
+        created_flags = [c for _, c in results]
+        self.assertEqual(sum(created_flags), 1)
+        # Every returned record shares the same idempotency_key -- no two
+        # distinct records for the same key.
+        keys = {r["idempotency_key"] for r, _ in results}
+        self.assertEqual(keys, {"race-key-1"})
+        # Exactly one JSON record file was persisted for this key (excluding
+        # the internal _idempotency_index bookkeeping directory).
+        record_files = [p for p in bi.BUSINESS_SIGNALS_DIR.glob("*.json")]
+        self.assertEqual(len(record_files), 1)
+
+    def test_retry_after_success_returns_the_original_record_not_a_duplicate(self):
+        first, created1 = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-A", "retry-key-1", {"idempotency_key": "retry-key-1", "v": 1}
+        )
+        second, created2 = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-B", "retry-key-1", {"idempotency_key": "retry-key-1", "v": 2}
+        )
+        self.assertTrue(created1)
+        self.assertFalse(created2)
+        self.assertEqual(second["v"], 1)  # original content, not the retry's payload
+        record_files = list(bi.BUSINESS_SIGNALS_DIR.glob("*.json"))
+        self.assertEqual(len(record_files), 1)
+
+    def test_different_keys_do_not_contend(self):
+        r1, c1 = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-X", "key-x", {"idempotency_key": "key-x"}
+        )
+        r2, c2 = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-Y", "key-y", {"idempotency_key": "key-y"}
+        )
+        self.assertTrue(c1)
+        self.assertTrue(c2)
+        self.assertEqual(len(list(bi.BUSINESS_SIGNALS_DIR.glob("*.json"))), 2)
+
+
 class DuplicateAndStaleTests(BusinessIntegrationTestCase):
     def test_duplicate_submission_of_same_external_event_is_a_no_op(self):
         kwargs = dict(kind="revenue", amount_brl=10.0, source_system="s",
@@ -965,6 +1144,66 @@ class MetricTemporalSemanticsTests(BusinessIntegrationTestCase):
             coverage=None, data_quality="observed", observed_at="2026-08-01T00:00:00+00:00",
         )
         self.assertEqual(obs["observed_at"], "2026-08-01T00:00:00+00:00")
+
+
+class TimezoneAwareEligibilityTests(BusinessIntegrationTestCase):
+    """P1 #4 (prompt-hardening-final-capital-agent-v0.2.md section 6):
+    filter_official_evaluation_observations must compare observed_at against
+    activation_date as real instants (via _parse_iso), not as raw ISO
+    strings, so different UTC offsets for the same instant don't silently
+    misclassify eligibility."""
+
+    def _obs(self, observed_at):
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="qualified_leads", value=3, unit="count",
+            period="2026-08", source="platform_export", environment="production",
+            coverage="full", data_quality="observed",
+        )
+        obs["observed_at"] = observed_at
+        return obs
+
+    def test_equivalent_instants_with_different_offsets_are_treated_as_equal(self):
+        # 2026-08-13T21:00:00-03:00 == 2026-08-14T00:00:00+00:00 (same
+        # instant). observed_at exactly equal to activation_date, expressed
+        # in a different offset, must be treated as on/after activation, not
+        # excluded by lexical string comparison (where the -03:00 string
+        # sorts before the +00:00 string despite being the SAME instant).
+        obs = self._obs("2026-08-13T21:00:00-03:00")
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-14T00:00:00+00:00"
+        )
+        self.assertEqual(filtered, [obs])
+
+    def test_utc_vs_local_offset_boundary_is_semantically_correct(self):
+        # observed strictly BEFORE activation once instants are compared
+        # correctly, even though the raw local-offset string would sort
+        # AFTER the raw UTC string lexically.
+        obs = self._obs("2026-08-13T20:59:59-03:00")  # == 23:59:59Z, 1s before activation
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-14T00:00:00+00:00"
+        )
+        self.assertEqual(filtered, [])
+
+    def test_observed_strictly_after_activation_included(self):
+        obs = self._obs("2026-08-14T00:00:01+00:00")
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-14T00:00:00+00:00"
+        )
+        self.assertEqual(filtered, [obs])
+
+    def test_observed_exactly_at_activation_boundary_is_included(self):
+        obs = self._obs("2026-08-14T00:00:00+00:00")
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-14T00:00:00+00:00"
+        )
+        self.assertEqual(filtered, [obs])
+
+    def test_unparseable_observed_at_is_excluded_not_fabricated(self):
+        obs = self._obs("not-a-real-timestamp")
+        filtered = bi.filter_official_evaluation_observations(
+            [obs], activation_date="2026-08-14T00:00:00+00:00"
+        )
+        self.assertEqual(filtered, [])
 
 
 class ExperimentAutoActivationGuardTests(unittest.TestCase):

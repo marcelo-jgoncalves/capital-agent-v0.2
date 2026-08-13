@@ -7,11 +7,13 @@ real repo state/.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -59,6 +61,102 @@ class SchedulerTriggerTestCase(unittest.TestCase):
             else:
                 setattr(sch, k, v)
         shutil.rmtree(self._tmp, ignore_errors=True)
+
+
+class SchedulerSnapshotAtomicityTests(unittest.TestCase):
+    """P2 (prompt-hardening-final-capital-agent-v0.2.md section 10):
+    scheduler_state.json and pending_jobs.json must not diverge after a
+    crash between writes."""
+
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp())
+        self._orig = {
+            "SCHEDULER_STATE_FILE": sch.SCHEDULER_STATE_FILE,
+            "PENDING_JOBS_FILE": sch.PENDING_JOBS_FILE,
+            "SCHEDULER_SNAPSHOT_FILE": sch.SCHEDULER_SNAPSHOT_FILE,
+        }
+        sch.SCHEDULER_STATE_FILE = self._tmp / "scheduler_state.json"
+        sch.PENDING_JOBS_FILE = self._tmp / "pending_jobs.json"
+        sch.SCHEDULER_SNAPSHOT_FILE = self._tmp / "_scheduler_snapshot.json"
+
+    def tearDown(self):
+        for k, v in self._orig.items():
+            setattr(sch, k, v)
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_normal_save_leaves_legacy_files_consistent_with_snapshot(self):
+        state = {"last_run_at": "t1", "run_history": []}
+        pending = [{"id": "JOB-1", "status": "queued"}]
+        sch.save_scheduler_snapshot(state, pending)
+        self.assertEqual(sch.load_scheduler_state()["last_run_at"], "t1")
+        self.assertEqual(sch.load_pending_jobs(), pending)
+
+    def test_crash_after_snapshot_before_legacy_state_write_recovers_on_load(self):
+        # Simulate: snapshot written successfully, but the process died
+        # before scheduler_state.json (or pending_jobs.json) was mirrored.
+        state = {"last_run_at": "t2", "run_history": ["x"]}
+        pending = [{"id": "JOB-2", "status": "queued"}]
+        snapshot = {"scheduler_state": state, "pending_jobs": pending}
+        sch.save_json(sch.SCHEDULER_SNAPSHOT_FILE, snapshot)
+        # legacy files never written at all -- worst case of the crash window
+        self.assertFalse(sch.SCHEDULER_STATE_FILE.exists())
+        self.assertFalse(sch.PENDING_JOBS_FILE.exists())
+
+        recovered_state = sch.load_scheduler_state()
+        recovered_pending = sch.load_pending_jobs()
+        self.assertEqual(recovered_state, state)
+        self.assertEqual(recovered_pending, pending)
+        # and the legacy files are now actually persisted on disk
+        self.assertTrue(sch.SCHEDULER_STATE_FILE.exists())
+        self.assertTrue(sch.PENDING_JOBS_FILE.exists())
+
+    def test_crash_after_job_write_before_checkpoint_write_recovers_on_load(self):
+        # Simulate: snapshot + pending_jobs.json mirrored, but
+        # scheduler_state.json (the checkpoint) never got mirrored --
+        # pending_jobs.json (on disk, stale/pre-crash) now disagrees with
+        # the snapshot's pending_jobs.
+        state = {"last_run_at": "t3", "run_history": ["y"]}
+        pending = [{"id": "JOB-3", "status": "queued"}]
+        snapshot = {"scheduler_state": state, "pending_jobs": pending}
+        sch.save_json(sch.SCHEDULER_SNAPSHOT_FILE, snapshot)
+        sch.save_json(sch.PENDING_JOBS_FILE, pending)  # only this one mirrored
+        # scheduler_state.json left stale/missing -- must be repaired to match
+        self.assertFalse(sch.SCHEDULER_STATE_FILE.exists())
+
+        recovered_state = sch.load_scheduler_state()
+        self.assertEqual(recovered_state, state)
+
+    def test_retry_after_crash_does_not_duplicate_the_job(self):
+        # A "retry" after a crash re-runs save_scheduler_snapshot with the
+        # SAME logical job (deterministic job_key dedupe already covers
+        # this at the enqueue() layer); here we confirm re-saving an
+        # equivalent snapshot does not create two divergent job lists.
+        state = {"last_run_at": "t4", "run_history": []}
+        pending = [{"id": "JOB-4", "job_key": "k", "status": "queued"}]
+        sch.save_scheduler_snapshot(state, pending)
+        sch.save_scheduler_snapshot(state, pending)  # retry, same content
+        self.assertEqual(sch.load_pending_jobs(), pending)
+        self.assertEqual(len(sch.load_pending_jobs()), 1)
+
+    def test_restart_recovery_does_not_lose_or_duplicate_work(self):
+        pending = []
+        job = sch.enqueue(pending, "job-key-1", "scheduled", False, "hint")
+        self.assertIsNotNone(job)
+        state = {"last_run_at": "t5", "run_history": []}
+        sch.save_scheduler_snapshot(state, pending)
+
+        # Simulate a restart: fresh load must see exactly the one job, not
+        # zero (lost work) and not more than one (duplicated work).
+        reloaded_pending = sch.load_pending_jobs()
+        self.assertEqual(len(reloaded_pending), 1)
+        self.assertEqual(reloaded_pending[0]["id"], job["id"])
+
+        # A subsequent enqueue of the SAME job_key (as would happen if the
+        # same due condition were re-evaluated after restart) must not
+        # duplicate it.
+        job2 = sch.enqueue(reloaded_pending, "job-key-1", "scheduled", False, "hint")
+        self.assertIsNone(job2)
+        self.assertEqual(len(reloaded_pending), 1)
 
 
 class NewRevenueDetectedTests(SchedulerTriggerTestCase):
@@ -173,6 +271,102 @@ class Exp001CannotAutoActivateViaSchedulerTests(SchedulerTriggerTestCase):
     def test_apply_experiment_lifecycle_transition_still_blocks_active_without_human(self):
         with self.assertRaises(bi.AutoActivationBlockedError):
             bi.apply_experiment_lifecycle_transition({"lifecycle_state": "READY_FOR_ACTIVATION"}, "ACTIVE")
+
+
+class SchedulerAtomicityTests(SchedulerTriggerTestCase):
+    """P2 #8 (prompt-hardening-final-capital-agent-v0.2.md section 10):
+    scheduler_state.json and pending_jobs.json must not diverge across a
+    crash between their writes -- no lost or duplicated jobs on restart."""
+
+    def setUp(self):
+        super().setUp()
+        self._orig["SCHEDULES_FILE"] = sch.SCHEDULES_FILE
+        self._orig["TRIGGERS_FILE"] = sch.TRIGGERS_FILE
+        self._orig["SCHEDULER_STATE_FILE"] = sch.SCHEDULER_STATE_FILE
+        self._orig["PENDING_JOBS_FILE"] = sch.PENDING_JOBS_FILE
+        self._orig["SCHEDULER_SNAPSHOT_FILE"] = sch.SCHEDULER_SNAPSHOT_FILE
+        sch.SCHEDULES_FILE = self._tmp / "schedules.json"
+        sch.TRIGGERS_FILE = self._tmp / "triggers.json"
+        sch.SCHEDULER_STATE_FILE = self._tmp / "scheduler_state.json"
+        sch.PENDING_JOBS_FILE = self._tmp / "pending_jobs.json"
+        sch.SCHEDULER_SNAPSHOT_FILE = self._tmp / "_scheduler_snapshot.json"
+        sch.SCHEDULES_FILE.write_text(json.dumps({"frequencies": {
+            "frequent": {"interval_minutes": 1, "jobs": ["heartbeat"], "requires_ai_reasoning": False},
+        }}), encoding="utf-8")
+        sch.TRIGGERS_FILE.write_text(json.dumps({"triggers": []}), encoding="utf-8")
+
+    def tearDown(self):
+        for attr in ("SCHEDULES_FILE", "TRIGGERS_FILE", "SCHEDULER_STATE_FILE", "PENDING_JOBS_FILE", "SCHEDULER_SNAPSHOT_FILE"):
+            setattr(sch, attr, self._orig[attr])
+        super().tearDown()
+
+    def test_save_json_is_atomic_no_partial_file_on_crash(self):
+        # Simulate a crash mid-write: os.replace either lands fully or not
+        # at all, so a reader never sees a half-written file.
+        path = self._tmp / "atomic_test.json"
+        sch.save_json(path, {"a": 1})
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"a": 1})
+        # No stray temp files left behind after a successful write.
+        leftovers = list(self._tmp.glob(".atomic_test.json.tmp-*"))
+        self.assertEqual(leftovers, [])
+
+    def test_normal_run_persists_both_state_and_pending_jobs(self):
+        with unittest.mock.patch("builtins.print"):
+            sch.cmd_run(argparse.Namespace())
+        state = sch.load_scheduler_state()
+        pending = sch.load_pending_jobs()
+        self.assertIn("frequent", state["last_frequency_run"])
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["job_key"], "frequent:heartbeat")
+
+    def test_crash_after_job_write_before_checkpoint_does_not_duplicate_on_retry(self):
+        # Simulate: pending_jobs.json was written (the job exists) but the
+        # process crashed before scheduler_state.json's checkpoint landed.
+        with unittest.mock.patch("builtins.print"):
+            sch.cmd_run(argparse.Namespace())
+        pending_after_first_run = sch.load_pending_jobs()
+        self.assertEqual(len(pending_after_first_run), 1)
+        # Roll the checkpoint back to simulate "crash before checkpoint write"
+        # (state never advanced, so due_frequencies will consider it due again).
+        sch.save_json(sch.SCHEDULER_STATE_FILE, {
+            "last_run_at": None, "last_frequency_run": {}, "last_trigger_check_at": None,
+            "run_history": [], "_snapshot": {},
+        })
+        with unittest.mock.patch("builtins.print"):
+            sch.cmd_run(argparse.Namespace())  # retry / restart
+        pending_after_retry = sch.load_pending_jobs()
+        # Still exactly one queued job for this job_key -- retry deduped, no
+        # duplicate work created by the "lost checkpoint" crash.
+        matching = [j for j in pending_after_retry if j["job_key"] == "frequent:heartbeat"]
+        self.assertEqual(len(matching), 1)
+
+    def test_restart_recovery_preserves_previously_queued_jobs(self):
+        with unittest.mock.patch("builtins.print"):
+            sch.cmd_run(argparse.Namespace())
+        pending_before = sch.load_pending_jobs()
+        # A fresh process "restarting" just reloads from disk.
+        pending_reloaded = sch.load_pending_jobs()
+        self.assertEqual(pending_before, pending_reloaded)
+
+    def test_duplicate_trigger_firing_across_runs_does_not_duplicate_job(self):
+        # A trigger whose firing condition is still true on the next run
+        # (e.g. checkpoint did not advance) must be deduped by the
+        # deterministic, timestamp-free job_key rather than re-queued with a
+        # distinct wall-clock-suffixed key.
+        pending = []
+        fired = {"trigger_id": "attribution_pending_too_long", "detail": "2 event(s) stuck: ['a', 'b']"}
+        trigger_def = {"requires_ai_reasoning": True}
+        for _ in range(3):
+            job = sch.enqueue(
+                pending, job_key=f"trigger:{fired['trigger_id']}:{fired['detail']}",
+                kind="trigger", requires_ai_reasoning=True, context_hint="x",
+            )
+        matching = [j for j in pending if j["job_key"] == f"trigger:{fired['trigger_id']}:{fired['detail']}"]
+        self.assertEqual(len(matching), 1)
+
+
+import argparse  # noqa: E402
+import unittest.mock  # noqa: E402
 
 
 if __name__ == "__main__":

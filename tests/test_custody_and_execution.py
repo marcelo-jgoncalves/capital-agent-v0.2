@@ -243,18 +243,27 @@ class CustodyInvariantTests(unittest.TestCase):
                     ca.cmd_record(args)
                 self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
 
-    def test_record_expense_requires_completed_execution_id(self):
+    def test_record_refuses_expense_fee_tax_even_with_no_execution_id(self):
+        # P0 hardening (prompt-hardening-final-capital-agent-v0.2.md section
+        # 3): expense/fee/tax no longer have a generic `record` path at all.
+        # The only legitimate path is HER -> confirm-execution -> ledger.
         with sandbox():
-            args = argparse.Namespace(
-                type="expense", category="infrastructure", amount=5.0,
-                description="hosting", reference="TEST-EXP-1", execution_id=None,
-            )
-            ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
-            with self.assertRaises(SystemExit):
-                ca.cmd_record(args)
-            self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
+            for blocked_type in ("expense", "fee", "tax"):
+                args = argparse.Namespace(
+                    type=blocked_type, category="infrastructure", amount=5.0,
+                    description="hosting", reference=f"TEST-{blocked_type}",
+                    execution_id=None,
+                )
+                ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    ca.cmd_record(args)
+                self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
 
-    def test_record_expense_with_completed_execution_id_succeeds(self):
+    def test_record_refuses_expense_fee_tax_even_with_completed_execution_id(self):
+        # This is the exact bug closed in this hardening pass: a completed
+        # Human Execution Request must not be "replayed" through `record` to
+        # mint a second, caller-chosen-amount ledger entry. confirm-execution
+        # already posted the one legitimate ledger consequence for this HER.
         with sandbox() as root:
             exec_id = "HER-TEST-1"
             completed = {
@@ -264,13 +273,50 @@ class CustodyInvariantTests(unittest.TestCase):
             (root / "execution" / "human_requests" / "completed" / f"{exec_id}.json").write_text(
                 json.dumps(completed), encoding="utf-8"
             )
-            args = argparse.Namespace(
-                type="expense", category="infrastructure", amount=5.0,
-                description="hosting", reference="TEST-EXP-1", execution_id=exec_id,
+            for blocked_type in ("expense", "fee", "tax"):
+                args = argparse.Namespace(
+                    type=blocked_type, category="infrastructure", amount=5.0,
+                    description="hosting", reference=f"TEST-{blocked_type}",
+                    execution_id=exec_id,
+                )
+                ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    ca.cmd_record(args)
+                self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
+
+    def test_completed_her_cannot_be_reused_for_a_second_financial_posting(self):
+        # End-to-end: confirm-execution posts the ledger row for a PAYMENT
+        # HER; a subsequent attempt to `record` against the same completed
+        # execution_id must not produce a second row.
+        with sandbox():
+            args = _execution_args(action="PAYMENT", asset="hosting", quantity=1.0,
+                                    max_price=5.0, max_total_capital=5.0, max_loss=5.0)
+            with patch("builtins.print"):
+                ca.cmd_request_execution(args)
+            request_id = next(ca.HR_PENDING_DIR.glob("*.json")).stem
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=1.0, executed_price=5.0, fees=0.0,
+                executed_timestamp=None, notes=None, category=None, ledger_type=None,
             )
             with patch("builtins.print"):
-                ca.cmd_record(args)
-            self.assertIn("TEST-EXP-1", ca.LEDGER_FILE.read_text(encoding="utf-8"))
+                ca.cmd_confirm_execution(confirm_args)
+            ledger_after_confirm = ca.LEDGER_FILE.read_text(encoding="utf-8")
+            rows_after_confirm = ledger_after_confirm.strip().splitlines()
+            self.assertEqual(
+                sum(1 for line in rows_after_confirm if request_id in line), 1
+            )
+
+            record_args = argparse.Namespace(
+                type="expense", category="infrastructure", amount=5.0,
+                description="hosting (replay attempt)", reference=request_id,
+                execution_id=request_id,
+            )
+            with self.assertRaises(SystemExit):
+                ca.cmd_record(record_args)
+            ledger_final = ca.LEDGER_FILE.read_text(encoding="utf-8")
+            self.assertEqual(ledger_final, ledger_after_confirm)
+            rows_final = ledger_final.strip().splitlines()
+            self.assertEqual(sum(1 for line in rows_final if request_id in line), 1)
 
     def test_record_refuses_direct_cash_event_kinds(self):
         with sandbox():
@@ -572,6 +618,62 @@ class ReserveAssetTests(unittest.TestCase):
             self.assertEqual(len(assets), 1)
             self.assertAlmostEqual(assets[0]["book_value_brl"], 20.5, places=2)
 
+    # -- P0 #2 idempotency (prompt-hardening-final section 4) --------------
+
+    def test_repeated_equivalent_booking_is_idempotent_no_op(self):
+        with sandbox():
+            equity_before_booking = None
+            request_id = self._confirm_a_buy(quantity=1.0, price=20.0)
+            with patch("builtins.print"):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
+            equity_after_first = ca.current_equity_floor()
+            with patch("builtins.print"):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
+            assets = ca.load_reserve_assets()
+            self.assertEqual(len(assets), 1)  # no duplicate row
+            self.assertAlmostEqual(ca.current_equity_floor(), equity_after_first, places=2)
+
+    def test_conflicting_replay_of_same_execution_id_fails(self):
+        with sandbox():
+            request_id = self._confirm_a_buy(quantity=1.0, price=20.0)
+            with patch("builtins.print"):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
+            with self.assertRaises(SystemExit):
+                # same execution_id, different category -> conflicting content
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="different-category", note="a"))
+            assets = ca.load_reserve_assets()
+            self.assertEqual(len(assets), 1)  # conflict must not duplicate or overwrite
+
+    def test_equity_floor_not_inflated_by_duplicate_booking_attempts(self):
+        with sandbox():
+            equity_before = ca.current_equity_floor()
+            request_id = self._confirm_a_buy(quantity=1.0, price=20.0)
+            for _ in range(3):
+                with patch("builtins.print"):
+                    ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
+            self.assertAlmostEqual(ca.current_equity_floor(), equity_before, places=2)
+
+    def test_idempotency_survives_reload_between_calls(self):
+        # Reloads reserve_assets.json from disk on every call rather than
+        # trusting an in-memory copy, so idempotency holds across separate
+        # process invocations (the real-world CLI usage pattern).
+        with sandbox():
+            request_id = self._confirm_a_buy(quantity=1.0, price=20.0)
+            with patch("builtins.print"):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
+            # Simulate a fresh process: nothing cached in module globals besides paths.
+            assets_on_disk = json.loads(ca.RESERVE_ASSETS_FILE.read_text(encoding="utf-8"))
+            self.assertEqual(len(assets_on_disk), 1)
+            with patch("builtins.print"):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
+            assets_on_disk = json.loads(ca.RESERVE_ASSETS_FILE.read_text(encoding="utf-8"))
+            self.assertEqual(len(assets_on_disk), 1)
+
+    def test_unknown_execution_id_still_fails_reserve_asset_booking(self):
+        with sandbox():
+            with self.assertRaises(SystemExit):
+                ca.cmd_record_reserve_asset(argparse.Namespace(execution_id="HER-UNKNOWN", category="reserve", note=""))
+
 
 class ApprovalAuthenticationTests(unittest.TestCase):
     def _create_pending_approval(self):
@@ -652,6 +754,38 @@ class SchedulerVendorNeutralityTests(unittest.TestCase):
         self.assertIsNotNone(job1)
         self.assertIsNone(job2)
         self.assertEqual(len(pending), 1)
+
+    # -- P1 #4 timezone-aware due_frequencies (prompt-hardening-final section 6) --
+
+    def test_due_frequencies_not_due_when_last_run_recent_regardless_of_offset(self):
+        import datetime as dt
+        now = dt.datetime(2026, 8, 14, 0, 0, 0, tzinfo=dt.timezone.utc)
+        # last_frequency_run stored 30 minutes before `now`, but expressed in
+        # a -03:00 local offset -- must not be misread as "long ago" or
+        # "in the future" by string comparison.
+        last_local = "2026-08-13T20:30:00-03:00"  # == 2026-08-13T23:30:00Z, 30 min before now
+        schedules = {"daily": {"interval_minutes": 60, "jobs": ["x"], "requires_ai_reasoning": False}}
+        state = {"last_frequency_run": {"daily": last_local}}
+        due = sch.due_frequencies(schedules, state, now)
+        self.assertEqual(due, [])  # only 30 minutes elapsed, interval is 60
+
+    def test_due_frequencies_due_when_interval_elapsed_across_offsets(self):
+        import datetime as dt
+        now = dt.datetime(2026, 8, 14, 0, 0, 0, tzinfo=dt.timezone.utc)
+        last_local = "2026-08-13T19:30:00-03:00"  # == 2026-08-13T22:30:00Z, 90 min before now
+        schedules = {"daily": {"interval_minutes": 60, "jobs": ["x"], "requires_ai_reasoning": False}}
+        state = {"last_frequency_run": {"daily": last_local}}
+        due = sch.due_frequencies(schedules, state, now)
+        self.assertEqual(due, ["daily"])
+
+    def test_due_frequencies_naive_now_and_aware_last_run_do_not_crash(self):
+        import datetime as dt
+        now = dt.datetime(2026, 8, 14, 0, 0, 0)  # naive
+        last_local = "2026-08-13T19:30:00-03:00"
+        schedules = {"daily": {"interval_minutes": 60, "jobs": ["x"], "requires_ai_reasoning": False}}
+        state = {"last_frequency_run": {"daily": last_local}}
+        due = sch.due_frequencies(schedules, state, now)  # must not raise
+        self.assertEqual(due, ["daily"])
 
 
 if __name__ == "__main__":

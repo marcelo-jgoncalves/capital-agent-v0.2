@@ -305,7 +305,7 @@ Complete evidence and red-team review.
     }, indent=2))
 
 
-RECORD_BLOCKED_TYPES = {"buy", "sell", "capital_out"}
+RECORD_BLOCKED_TYPES = {"buy", "sell", "capital_out", "expense", "fee", "tax"}
 
 # Kinds that represent externally-arriving cash and MUST go through the
 # ExternalCashEvent state machine (OBSERVED -> ... -> VERIFIED -> ATTRIBUTED
@@ -316,10 +316,21 @@ RECORD_BLOCKED_TYPES = {"buy", "sell", "capital_out"}
 RECORD_REQUIRES_CASH_EVENT_TYPES = {"revenue", "refund", "chargeback", "other_external_inflow"}
 
 # Kinds that represent money leaving custody via a real financial execution
-# (a payment). These must trace back to a completed Human Execution Request
-# (execution/human_requests/completed/<id>.json), never be posted as a bare
-# number by `record`.
-RECORD_REQUIRES_EXECUTION_TYPES = {"expense", "fee", "tax"}
+# (a payment). Previously these accepted a bare --execution-id referencing a
+# completed Human Execution Request and then posted a NEW ledger row built
+# from caller-supplied args.amount/category/reference -- but confirm-execution
+# already posts the one legitimate ledger consequence for that HER (see
+# cmd_confirm_execution's append_ledger call). Accepting an already-completed
+# execution_id here let the same HER be "replayed" through `record` to create
+# a second, arbitrary-amount ledger entry, in violation of "one execution ->
+# one ledger consequence" (see prompt-hardening-final-capital-agent-v0.2.md
+# section 3). There is no safe generic path left for these types: they are
+# now unconditionally in RECORD_BLOCKED_TYPES above. If a genuine
+# execution-adjacent-but-distinct financial fact ever needs modeling (e.g. an
+# externally-imposed debit not initiated by the human), model it as its own
+# entity (e.g. ExternalDebitEvent) with its own state machine -- do not
+# resurrect this generic path.
+RECORD_REQUIRES_EXECUTION_TYPES: set[str] = set()
 
 # Kinds that are neither an ExternalCashEvent nor a Human Execution Request --
 # purely administrative bookkeeping entries (e.g. the initial funding event,
@@ -345,12 +356,17 @@ def cmd_record(args):
             f"refused: '{args.type}' represents a real financial execution "
             "(a market position change or money leaving custody) and may "
             "only enter the ledger through the Human Execution Request "
-            "lifecycle: `request-execution` then `confirm-execution`. "
-            "Direct `record` of this type would let it be entered without "
-            "human confirmation, which the custody invariant "
-            "(AI_OPERATING_MANUAL.md) does not permit. If this is the "
-            "initial funding event or a non-execution bookkeeping entry, "
-            "use a type outside {buy, sell, capital_out}."
+            "lifecycle: `request-execution` then `confirm-execution`, which "
+            "posts the one legitimate ledger consequence for that execution "
+            "itself. Direct `record` of this type -- including passing "
+            "--execution-id of an already-completed request -- would let it "
+            "be entered without human confirmation of THIS specific fact, or "
+            "would let a completed execution be replayed into a second, "
+            "arbitrary-amount ledger entry, which the custody invariant "
+            "(AI_OPERATING_MANUAL.md) and 'one execution -> one ledger "
+            "consequence' do not permit. If this is the initial funding "
+            "event or a non-execution bookkeeping entry, use a type outside "
+            "{buy, sell, capital_out, expense, fee, tax}."
         )
     if args.type in RECORD_REQUIRES_CASH_EVENT_TYPES:
         raise SystemExit(
@@ -363,29 +379,6 @@ def cmd_record(args):
             "type would bypass the human-only VERIFIED gate that pipeline "
             "enforces. See EXTERNAL_INTEGRATION.md."
         )
-    if args.type in RECORD_REQUIRES_EXECUTION_TYPES:
-        execution_id = getattr(args, "execution_id", None)
-        if not execution_id:
-            raise SystemExit(
-                f"refused: '{args.type}' represents money leaving custody via a "
-                "real financial execution (a payment) and must trace back to a "
-                "completed Human Execution Request. Pass "
-                "--execution-id <id> naming a request already confirmed via "
-                "`confirm-execution` (execution/human_requests/completed/). "
-                "Direct, unattributed `record` of this type is refused."
-            )
-        completed_path = HR_COMPLETED_DIR / f"{execution_id}.json"
-        if not completed_path.exists():
-            raise SystemExit(
-                f"refused: no completed execution request '{execution_id}'. "
-                "record of an execution-derived type only accepts execution "
-                "IDs that were actually confirmed via confirm-execution."
-            )
-        if args.amount > cash_balance():
-            raise SystemExit("insufficient verified cash")
-        append_ledger(args.type, args.category, args.amount, args.description, args.reference)
-        print(f"recorded. verified cash: BRL {cash_balance():.2f}")
-        return
     if args.type in RECORD_REQUIRES_ADMIN_CONFIRM_TYPES:
         admin_confirm = bool(getattr(args, "admin_confirm", False))
         reason = getattr(args, "reason", None)
@@ -420,8 +413,15 @@ def cmd_record(args):
         print(f"recorded (admin-confirmed, audit={audit_id}). verified cash: BRL {cash_balance():.2f}")
         return
     # Should be unreachable: every allowed type is covered by one of the
-    # branches above (blocked / requires-cash-event / requires-execution /
-    # requires-admin-confirm).
+    # branches above (blocked / requires-cash-event / requires-admin-confirm).
+    # RECORD_REQUIRES_EXECUTION_TYPES is intentionally empty (see its
+    # definition above) -- expense/fee/tax used to have a branch here that
+    # accepted a completed HER's --execution-id and posted a NEW ledger row
+    # from caller-supplied amount/category/reference, letting a completed HER
+    # be replayed into a second, arbitrary-amount ledger entry. That was the
+    # P0 HER-reuse bug closed in this hardening pass; those types are now
+    # handled by the RECORD_BLOCKED_TYPES branch above, same as
+    # buy/sell/capital_out.
     raise SystemExit(f"refused: '{args.type}' has no sanctioned direct-record path")
 
 
@@ -922,7 +922,15 @@ def cmd_record_reserve_asset(args):
     current_equity_floor() stops understating patrimony after a confirmed
     purchase. Book value is derived from the referenced completed Human
     Execution Request, never taken as a free-form number, so it always
-    traces back to something the human actually confirmed."""
+    traces back to something the human actually confirmed.
+
+    execution_id is the idempotency key for this booking: replaying the same
+    execution_id with equivalent content (asset/category/book_value_brl) is a
+    no-op that reprints the existing entry rather than duplicating it, so
+    equity floor cannot be inflated by re-running the same call (retry,
+    duplicate cron trigger, operator re-entry, etc). Replaying the same
+    execution_id with DIFFERENT content is an explicit conflict error --
+    never silently overwritten and never silently duplicated."""
     path = HR_COMPLETED_DIR / f"{args.execution_id}.json"
     if not path.exists():
         raise SystemExit(
@@ -934,20 +942,50 @@ def cmd_record_reserve_asset(args):
     if data.get("action") != "BUY":
         raise SystemExit(f"execution {args.execution_id} is not a BUY; refusing to book it as a reserve asset")
     book_value = data["confirmation"]["executed_total_brl"]
+    asset_name = data.get("asset")
+
+    # Idempotency check: does a reserve asset entry already exist for this
+    # execution_id? Reload from disk each time (never trust an in-memory
+    # copy) so concurrent/repeated invocations always see the latest
+    # persisted state.
+    assets = load_reserve_assets()
+    existing = [a for a in assets if a.get("execution_id") == args.execution_id]
+    if existing:
+        prior = existing[0]
+        same_content = (
+            prior.get("asset") == asset_name
+            and prior.get("category") == args.category
+            and round(float(prior.get("book_value_brl", 0)), 2) == round(float(book_value), 2)
+        )
+        if same_content:
+            print(json.dumps({
+                "recorded": prior,
+                "idempotent": True,
+                "verified_equity_floor_brl": current_equity_floor(),
+            }, indent=2))
+            return
+        raise SystemExit(
+            f"conflict: execution_id '{args.execution_id}' is already booked as a "
+            f"reserve asset with different content (existing: asset={prior.get('asset')!r} "
+            f"category={prior.get('category')!r} book_value_brl={prior.get('book_value_brl')!r}; "
+            f"requested: asset={asset_name!r} category={args.category!r} book_value_brl={book_value!r}). "
+            "Refusing to duplicate or silently overwrite an existing booking. If the "
+            "existing entry is wrong, correct it through an explicit, audited "
+            "administrative process -- do not resubmit with different values."
+        )
 
     entry = {
         "id": f"RA-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
         "execution_id": args.execution_id,
-        "asset": data.get("asset"),
+        "asset": asset_name,
         "category": args.category,
         "book_value_brl": book_value,
         "recorded_at": now_iso(),
         "note": args.note,
     }
-    assets = load_reserve_assets()
     assets.append(entry)
     RESERVE_ASSETS_FILE.write_text(json.dumps(assets, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(json.dumps({"recorded": entry, "verified_equity_floor_brl": current_equity_floor()}, indent=2))
+    print(json.dumps({"recorded": entry, "idempotent": False, "verified_equity_floor_brl": current_equity_floor()}, indent=2))
 
 
 def _list_json(dir_path: Path) -> list[dict]:
@@ -1127,8 +1165,6 @@ def build_parser():
     rec.add_argument("--amount", type=float, required=True)
     rec.add_argument("--description", required=True)
     rec.add_argument("--reference", required=True)
-    rec.add_argument("--execution-id", dest="execution_id", default=None,
-                      help="Completed Human Execution Request id, required for expense/fee/tax.")
     rec.add_argument("--admin-confirm", dest="admin_confirm", action="store_true",
                       help="Required (with --reason) for capital_in/adjustment administrative entries.")
     rec.add_argument("--reason", default=None,

@@ -28,6 +28,7 @@ Design constraints enforced here (see EXTERNAL_INTEGRATION.md for rationale):
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import re
@@ -272,18 +273,72 @@ VALID_ENVIRONMENTS = {"production", "dev", "test", "staging", "smoke", "e2e", "s
 def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str, data: dict) -> tuple[dict, bool]:
     """Write `data` to dir_path/<record_id>.json unless a record with the
     same idempotency_key already exists in that directory, in which case the
-    existing record is returned unchanged. Returns (record, created)."""
+    existing record is returned unchanged. Returns (record, created).
+
+    P2 hardening (prompt-hardening-final-capital-agent-v0.2.md section 9):
+    the naive version of this (scan dir for idempotency_key, then write if
+    absent) has a real race: two concurrent processes can both finish the
+    scan before either writes, and both then write distinct <record_id>.json
+    files for the same idempotency_key, producing a duplicate record.
+
+    Fix: a deterministic per-idempotency_key claim file, created with an
+    atomic O_CREAT|O_EXCL open (a single filesystem syscall the OS
+    guarantees only one caller can win). The winner writes the real record;
+    every loser (this call, or a retry) reads back the winner's record_id
+    from the claim file and returns the winner's persisted record instead of
+    writing anything -- so retry/concurrency can never produce a duplicate.
+    No lock file is left behind mid-flight without content: the claim file
+    is created with its final content in the same open() call, so a crash
+    right after the atomic create still leaves a valid, readable claim
+    (never a bare empty lock someone else must interpret)."""
     dir_path.mkdir(parents=True, exist_ok=True)
-    for existing_path in sorted(dir_path.glob("*.json")):
+    index_dir = dir_path / "_idempotency_index"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", idempotency_key) or "empty"
+    if len(safe_key) > 150:
+        safe_key = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    index_path = index_dir / f"{safe_key}.json"
+
+    def _read_claimed_record() -> Optional[dict]:
         try:
-            existing = json.loads(existing_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if existing.get("idempotency_key") == idempotency_key:
-            return existing, False
-    path = dir_path / f"{record_id}.json"
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return data, True
+            claim = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        claimed_path = dir_path / f"{claim['record_id']}.json"
+        try:
+            return json.loads(claimed_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, KeyError):
+            return None
+
+    # Fast path: already claimed (common case -- no lock contention needed
+    # to observe a fact that's already settled).
+    existing = _read_claimed_record()
+    if existing is not None:
+        return existing, False
+
+    try:
+        fd = os.open(str(index_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        # Lost the race to claim this idempotency_key between the fast-path
+        # read and here. Poll briefly for the winner's record to appear
+        # (the winner writes the real record right after winning the claim).
+        for _ in range(200):
+            existing = _read_claimed_record()
+            if existing is not None:
+                return existing, False
+            time.sleep(0.005)
+        raise RuntimeError(
+            f"idempotency race unresolved for key {idempotency_key!r}: claim file exists "
+            "but its record never became readable"
+        )
+    else:
+        try:
+            os.write(fd, json.dumps({"record_id": record_id, "idempotency_key": idempotency_key}).encode("utf-8"))
+        finally:
+            os.close(fd)
+        path = dir_path / f"{record_id}.json"
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        return data, True
 
 
 class BusinessSignalError(ValueError):
@@ -990,13 +1045,35 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
     post" and "wrote the ledger line" cannot produce a duplicate line on
     retry, and two concurrent callers racing on the same idempotency_key
     cannot both post.
-    """
-    if event["state"] == "LEDGER_POSTED":
-        return event  # idempotent no-op
-    if event["state"] != "RECONCILED":
-        raise CashEventStateError(f"cannot post to ledger from state {event['state']}; must be RECONCILED")
 
-    idem_key = event["idempotency_key"]
+    P1 hardening (prompt-hardening-final-capital-agent-v0.2.md section 5):
+    the caller-supplied `event` is used ONLY to identify which persisted
+    record to act on (`event["id"]`) and, optionally, as an expected-state
+    check. Every financial fact -- amount_brl, kind, source_system,
+    idempotency_key, state -- is re-derived from the record reloaded fresh
+    from disk (the canonical persisted state) at the top of this call, never
+    from the in-memory object the caller passed in. This closes the path
+    where a stale or adulterated in-memory copy (e.g. held across a retry,
+    or mutated by a bug elsewhere) could post a different amount/kind/source
+    than what was actually verified and persisted.
+    """
+    event_id = event["id"]
+    canonical = load_external_cash_event(event_id)
+
+    expected_state = event.get("state")
+    if expected_state is not None and expected_state != canonical["state"]:
+        raise CashEventStateError(
+            f"stale event object for {event_id!r}: caller expected state "
+            f"{expected_state!r} but persisted canonical state is "
+            f"{canonical['state']!r}. Reload the event before retrying."
+        )
+
+    if canonical["state"] == "LEDGER_POSTED":
+        return canonical  # idempotent no-op
+    if canonical["state"] != "RECONCILED":
+        raise CashEventStateError(f"cannot post to ledger from state {canonical['state']}; must be RECONCILED")
+
+    idem_key = canonical["idempotency_key"]
     wal_dir = EXTERNAL_CASH_EVENTS_DIR / "_wal"
     wal_dir.mkdir(parents=True, exist_ok=True)
     lock_path = wal_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", idem_key) + ".lock")
@@ -1004,20 +1081,28 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
     acquired = _acquire_ledger_post_lock(lock_path, idem_key=idem_key, max_lock_wait_s=max_lock_wait_s)
 
     try:
-        ledger_type = CASH_EVENT_KIND_TO_LEDGER_TYPE[event["kind"]]
+        # Re-reload under the lock: another process may have posted (or
+        # advanced) this event between the check above and lock acquisition.
+        canonical = load_external_cash_event(event_id)
+        if canonical["state"] == "LEDGER_POSTED":
+            return canonical  # idempotent no-op, race resolved
+        if canonical["state"] != "RECONCILED":
+            raise CashEventStateError(f"cannot post to ledger from state {canonical['state']}; must be RECONCILED")
+
+        ledger_type = CASH_EVENT_KIND_TO_LEDGER_TYPE[canonical["kind"]]
         _assert_ledger_reference_matches(
-            idem_key, expected_type=ledger_type, expected_amount=event["amount_brl"],
+            idem_key, expected_type=ledger_type, expected_amount=canonical["amount_brl"],
             expected_category="external_cash_event",
         )
         if not _ledger_reference_posted(idem_key):
             append_ledger_fn(
                 ledger_type,
                 "external_cash_event",
-                event["amount_brl"],
-                f"External cash event {event['id']} ({event['kind']}) from {event['source_system']}",
+                canonical["amount_brl"],
+                f"External cash event {canonical['id']} ({canonical['kind']}) from {canonical['source_system']}",
                 idem_key,
             )
-        updated = _advance_cash_event(event, "LEDGER_POSTED", actor="system:ledger_post")
+        updated = _advance_cash_event(canonical, "LEDGER_POSTED", actor="system:ledger_post")
         updated["ledger_reference"] = idem_key
         return _persist_cash_event(updated)
     finally:
@@ -1320,14 +1405,30 @@ def filter_official_evaluation_observations(observations: list[dict], *, activat
     actually happened), NOT `retrieved_at` (when this system happened to
     fetch/ingest it). A production data point observed BEFORE activation but
     retrieved/backfilled AFTER activation must not count toward post-
-    activation evaluation just because it was fetched late."""
+    activation evaluation just because it was fetched late.
+
+    Timezone-aware (prompt-hardening-final-capital-agent-v0.2.md section 6):
+    compares parsed instants via `_parse_iso`, not raw ISO-8601 strings.
+    Lexical string comparison silently breaks whenever `observed_at` and
+    `activation_date` use different UTC offsets for the same instant (e.g.
+    `...T21:00:00-03:00` vs `...T00:00:00+00:00`), or mixed offset/`Z`
+    notation -- both real possibilities across data sources ingested here.
+    An `observed_at` (or `activation_date`) that fails to parse is treated
+    as ineligible/unknown rather than silently included, since a
+    fabricated/guessed instant could wrongly grant or deny eligibility."""
     out = []
+    activation_dt = _parse_iso(activation_date) if activation_date else None
     for obs in observations:
         if obs.get("environment") != "production":
             continue
-        if activation_date:
-            observed = obs.get("observed_at", "")
-            if observed and observed < activation_date:
+        if activation_dt is not None:
+            observed_dt = _parse_iso(obs.get("observed_at", ""))
+            if observed_dt is None:
+                # observed_at present but unparseable: cannot establish it is
+                # on/after activation, so exclude rather than guess.
+                if obs.get("observed_at"):
+                    continue
+            elif observed_dt < activation_dt:
                 continue
         out.append(obs)
     return out
