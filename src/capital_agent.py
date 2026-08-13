@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import business_integration as bi  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_FILE = ROOT / "config" / "policy.json"
 CRITICAL_FILE = ROOT / "config" / "critical_decisions.json"
@@ -167,8 +170,18 @@ def policy_check_proposal(amount: float, is_reserve_instrument: bool = False) ->
     cash = cash_balance()
     issues = []
 
-    if amount <= 0:
-        issues.append("amount must be greater than zero")
+    if amount is None:
+        issues.append("amount is required")
+        return issues
+    if amount < 0:
+        issues.append("amount must not be negative")
+        return issues
+    # amount == 0 is a genuinely valid, distinct case (e.g. a zero-capital
+    # experiment that only spends operator time) -- it must not be rejected
+    # as if it were invalid/missing input. It simply has no allocation-limit
+    # or cash-reserve checks to run below (0 can never breach a percentage
+    # cap or the reserve floor).
+    if amount == 0:
         return issues
 
     if is_reserve_instrument and "max_single_reserve_instrument_pct_equity" in policy:
@@ -294,6 +307,32 @@ Complete evidence and red-team review.
 
 RECORD_BLOCKED_TYPES = {"buy", "sell", "capital_out"}
 
+# Kinds that represent externally-arriving cash and MUST go through the
+# ExternalCashEvent state machine (OBSERVED -> ... -> VERIFIED -> ATTRIBUTED
+# -> RECONCILED -> LEDGER_POSTED, see src/business_integration.py) rather than
+# being posted directly by `record`. Allowing direct posting here would let an
+# operator claim verified external cash facts without the human-only VERIFIED
+# gate that module enforces.
+RECORD_REQUIRES_CASH_EVENT_TYPES = {"revenue", "refund", "chargeback", "other_external_inflow"}
+
+# Kinds that represent money leaving custody via a real financial execution
+# (a payment). These must trace back to a completed Human Execution Request
+# (execution/human_requests/completed/<id>.json), never be posted as a bare
+# number by `record`.
+RECORD_REQUIRES_EXECUTION_TYPES = {"expense", "fee", "tax"}
+
+# Kinds that are neither an ExternalCashEvent nor a Human Execution Request --
+# purely administrative bookkeeping entries (e.g. the initial funding event,
+# or a manual correction). These are the narrowest possible escape hatch: they
+# require an explicit --admin-confirm flag plus a non-empty --reason, both of
+# which are persisted with the entry, so this can never be a silent,
+# unauthenticated way to inject arbitrary "verified" cash facts. This design
+# follows the interactive-session human-statement convention already used by
+# `approve-decision` (see CRITICAL_DECISIONS.md "Approval authentication").
+RECORD_REQUIRES_ADMIN_CONFIRM_TYPES = {"capital_in", "adjustment"}
+
+ADMIN_LEDGER_ACTIONS_DIR = ROOT / "journal" / "admin_ledger_actions"
+
 
 def cmd_record(args):
     allowed = {"capital_in", "revenue", "sell", "refund", "expense", "buy",
@@ -313,31 +352,125 @@ def cmd_record(args):
             "initial funding event or a non-execution bookkeeping entry, "
             "use a type outside {buy, sell, capital_out}."
         )
-    if args.type in {"expense", "fee", "tax"}:
+    if args.type in RECORD_REQUIRES_CASH_EVENT_TYPES:
+        raise SystemExit(
+            f"refused: '{args.type}' represents externally-arriving cash and "
+            "may only enter the ledger via the ExternalCashEvent pipeline "
+            "(src/business_integration.py: observe_external_cash_event -> "
+            "report_external_cash_event -> verify_external_cash_event -> "
+            "attribute_external_cash_event -> reconcile_external_cash_event "
+            "-> post_external_cash_event_to_ledger). Direct `record` of this "
+            "type would bypass the human-only VERIFIED gate that pipeline "
+            "enforces. See EXTERNAL_INTEGRATION.md."
+        )
+    if args.type in RECORD_REQUIRES_EXECUTION_TYPES:
+        execution_id = getattr(args, "execution_id", None)
+        if not execution_id:
+            raise SystemExit(
+                f"refused: '{args.type}' represents money leaving custody via a "
+                "real financial execution (a payment) and must trace back to a "
+                "completed Human Execution Request. Pass "
+                "--execution-id <id> naming a request already confirmed via "
+                "`confirm-execution` (execution/human_requests/completed/). "
+                "Direct, unattributed `record` of this type is refused."
+            )
+        completed_path = HR_COMPLETED_DIR / f"{execution_id}.json"
+        if not completed_path.exists():
+            raise SystemExit(
+                f"refused: no completed execution request '{execution_id}'. "
+                "record of an execution-derived type only accepts execution "
+                "IDs that were actually confirmed via confirm-execution."
+            )
         if args.amount > cash_balance():
             raise SystemExit("insufficient verified cash")
-    append_ledger(args.type, args.category, args.amount, args.description, args.reference)
-    print(f"recorded. verified cash: BRL {cash_balance():.2f}")
+        append_ledger(args.type, args.category, args.amount, args.description, args.reference)
+        print(f"recorded. verified cash: BRL {cash_balance():.2f}")
+        return
+    if args.type in RECORD_REQUIRES_ADMIN_CONFIRM_TYPES:
+        admin_confirm = bool(getattr(args, "admin_confirm", False))
+        reason = getattr(args, "reason", None)
+        if not admin_confirm or not reason:
+            raise SystemExit(
+                f"refused: '{args.type}' is a restricted administrative "
+                "bookkeeping entry (not a real financial execution, not "
+                "externally-verified cash). It requires an explicit "
+                "--admin-confirm flag AND a non-empty --reason, both "
+                "persisted with the entry as an audit record. This is not a "
+                "general-purpose way to inject arbitrary cash facts -- use it "
+                "only for genuine administrative bookkeeping (e.g. the "
+                "initial funding event, a documented correction)."
+            )
+        audit_id = f"ADMIN-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
+        ADMIN_LEDGER_ACTIONS_DIR.mkdir(parents=True, exist_ok=True)
+        audit_record = {
+            "id": audit_id,
+            "at": now_iso(),
+            "type": args.type,
+            "category": args.category,
+            "amount_brl": round(args.amount, 2),
+            "description": args.description,
+            "reference": args.reference,
+            "reason": reason,
+        }
+        (ADMIN_LEDGER_ACTIONS_DIR / f"{audit_id}.json").write_text(
+            json.dumps(audit_record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        append_ledger(args.type, args.category, args.amount,
+                       f"{args.description} [ADMIN-CONFIRMED: {reason}]", args.reference)
+        print(f"recorded (admin-confirmed, audit={audit_id}). verified cash: BRL {cash_balance():.2f}")
+        return
+    # Should be unreachable: every allowed type is covered by one of the
+    # branches above (blocked / requires-cash-event / requires-execution /
+    # requires-admin-confirm).
+    raise SystemExit(f"refused: '{args.type}' has no sanctioned direct-record path")
+
+
+def _validate_experiment_schema(data: dict) -> None:
+    """Validate a new/updated experiment record against
+    schemas/experiment.schema.json via the same runtime-validation path
+    (business_integration.validate_against_schema) used for every other
+    canonical entity, so experiment records are never exempt from schema
+    enforcement."""
+    bi.validate_against_schema(data, "experiment.schema.json")
 
 
 def cmd_new_experiment(args):
     exp_id = f"EXP-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     issues = policy_check_proposal(args.budget)
     # Canonical experiment schema (see src/business_integration.py
-    # EXPERIMENT_LIFECYCLE_STATES / EXTERNAL_INTEGRATION.md): lifecycle_state
-    # is the single source of truth. New experiments always start PLANNED --
-    # policy issues found at proposal time are recorded in policy_issues,
-    # they do not create a separate "blocked" lifecycle state. Legacy
-    # 'state'/'status' fields are kept in sync with lifecycle_state, never
-    # diverging, per the migration note already present on EXP-001.
+    # EXPERIMENT_LIFECYCLE_STATES / EXTERNAL_INTEGRATION.md, and the
+    # canonical shape on EXP-001 experiments/active/EXP-20260813-62C22E.json):
+    # lifecycle_state is the single source of truth. New experiments always
+    # start PLANNED -- policy issues found at proposal time are recorded in
+    # policy_issues, they do not create a separate "blocked" lifecycle
+    # state. Legacy 'state'/'status' fields are kept in sync with
+    # lifecycle_state, never diverging, per the migration note already
+    # present on EXP-001. capital_budget_brl/resource_budget/
+    # non_financial_risks are populated from the start (rather than only
+    # being added by a later migration pass) so every experiment created
+    # through this CLI is already in the full canonical shape.
     lifecycle_state = "PLANNED"
+    budget = round(args.budget, 2)
     data = {
         "id": exp_id,
         "created_at": now_iso(),
         "title": args.title,
         "hypothesis": args.hypothesis,
-        "budget_brl": round(args.budget, 2),
+        "budget_brl": budget,
         "max_loss_brl": round(args.max_loss, 2),
+        "capital_budget_brl": budget,
+        "resource_budget": {
+            "operator_time_minutes": None,
+            "publications_planned": None,
+            "ai_runs_budget": None,
+            "note": (
+                "Non-financial resource budget, auxiliary only. "
+                "operator_time_minutes is never auto-converted to money in "
+                "the ledger or in ROIC (see INVESTMENT_POLICY.md and "
+                "EXTERNAL_INTEGRATION.md)."
+            ),
+        },
+        "non_financial_risks": [],
         "success_metric": args.success_metric,
         "kill_condition": args.kill_condition,
         "state": lifecycle_state,
@@ -352,8 +485,10 @@ def cmd_new_experiment(args):
             "lifecycle_state."
         ),
         "policy_issues": issues,
-        "cash_flows": []
+        "cash_flows": [],
+        "schema_version": "1.0",
     }
+    _validate_experiment_schema(data)
     path = ACTIVE_EXPERIMENTS_DIR / f"{exp_id}.json"
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     append_index("experiments", {
@@ -992,6 +1127,12 @@ def build_parser():
     rec.add_argument("--amount", type=float, required=True)
     rec.add_argument("--description", required=True)
     rec.add_argument("--reference", required=True)
+    rec.add_argument("--execution-id", dest="execution_id", default=None,
+                      help="Completed Human Execution Request id, required for expense/fee/tax.")
+    rec.add_argument("--admin-confirm", dest="admin_confirm", action="store_true",
+                      help="Required (with --reason) for capital_in/adjustment administrative entries.")
+    rec.add_argument("--reason", default=None,
+                      help="Mandatory audit reason for capital_in/adjustment administrative entries.")
     rec.set_defaults(func=cmd_record)
 
     ne = sub.add_parser("new-experiment")

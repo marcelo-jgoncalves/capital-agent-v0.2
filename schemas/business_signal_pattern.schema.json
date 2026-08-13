@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BusinessSignalPattern",
+  "description": "The BUSINESS_SIGNAL entity produced by src/business_integration.py create_business_signal_entity(): a pattern/opportunity claim derived FROM one or more BusinessObservation records (see derived_from_observation_ids), never a raw fact itself. NOTE (naming debt, flagged for owner sign-off): this is the entity EXTERNAL_INTEGRATION.md's 5.1/5.2 sections describe as 'BUSINESS_SIGNAL'. A separate, structurally different record produced by ingest_business_signal() is ALSO informally called a business signal and validates against business_signal.schema.json; the two are not interchangeable. Ideally one of the two would be renamed (e.g. ingest_business_signal's output is arguably BusinessObservation-shaped) -- left as-is here to avoid a wide rename across call sites/tests without explicit owner sign-off.",
+  "type": "object",
+  "required": ["id", "signal_type", "origin", "evidence_refs", "period", "status", "schema_version"],
+  "properties": {
+    "id": {"type": "string"},
+    "signal_type": {"type": "string"},
+    "origin": {"type": "string"},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "derived_from_observation_ids": {"type": "array", "items": {"type": "string"}},
+    "period": {"type": "string"},
+    "intensity": {"type": ["number", "null"]},
+    "confidence": {"type": ["number", "null"]},
+    "limitations": {"type": ["string", "null"]},
+    "first_observed_at": {"type": "string"},
+    "last_observed_at": {"type": "string"},
+    "status": {"type": "string", "enum": ["new", "under_review", "promoted_to_opportunity_candidate", "rejected", "stale"]},
+    "opportunity_candidate_ref": {"type": ["string", "null"]},
+    "experiment_id": {"type": ["string", "null"]},
+    "promotion_rationale": {"type": "string"},
+    "promoted_at": {"type": "string"},
+    "schema_version": {"type": "string"}
+  },
+  "additionalProperties": false
+}

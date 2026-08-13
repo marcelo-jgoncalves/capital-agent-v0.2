@@ -216,6 +216,18 @@ def check_deterministic_triggers(triggers: list[dict], state: dict) -> list[dict
     threshold_hits = []
     for exp in _load_json_files(ACTIVE_EXPERIMENTS_DIR):
         exp_id = exp.get("id") or exp.get("code")
+        activation_date = exp.get("activated_at")
+        # Recompute eligibility here rather than trusting each observation's
+        # stored `eligible_for_official_evaluation` flag, which is set purely
+        # from environment=='production' at observation-creation time and
+        # does not know the experiment's activation_date. A production
+        # observation whose observed_at predates activation must never count
+        # toward a post-activation threshold crossing, even if it happens to
+        # be retrieved/backfilled after activation.
+        eligible_observations = bi.filter_official_evaluation_observations(
+            [o for o in observations if o.get("experiment_id") == exp_id],
+            activation_date=activation_date,
+        )
         for field_name, direction in (("success_metric", ">="), ("kill_condition", "<=")):
             spec = exp.get(field_name)
             if not isinstance(spec, str) or ":" not in spec:
@@ -226,7 +238,7 @@ def check_deterministic_triggers(triggers: list[dict], state: dict) -> list[dict
                 threshold = float(threshold_raw.strip())
             except ValueError:
                 continue
-            matches = [o for o in observations if o.get("experiment_id") == exp_id and o.get("metric_name") == metric_name and o.get("eligible_for_official_evaluation") and o.get("value") is not None]
+            matches = [o for o in eligible_observations if o.get("metric_name") == metric_name and o.get("value") is not None]
             for obs in matches:
                 value = obs["value"]
                 crossed = value >= threshold if direction == ">=" else value <= threshold

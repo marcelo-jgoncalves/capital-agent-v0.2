@@ -68,7 +68,12 @@ It **cannot, at any phase**:
 - `SYSTEM_EVOLUTION.md` — self-improvement/change governance.
 - `config/policy.json` — machine-readable financial limits.
 - `config/system_governance.json` — machine-readable system-change rules.
-- `data/ledger.csv` — accounting source, updated only via confirmed human execution.
+- `data/ledger.csv` — accounting source. Updated only via (a) a confirmed
+  Human Execution Request or (b) an External Cash Event that has passed the
+  full OBSERVED->...->VERIFIED->RECONCILED pipeline (`EXTERNAL_INTEGRATION.md`);
+  a narrow, explicitly-audited administrative path exists for pure
+  bookkeeping entries (e.g. initial funding), never for money the operator
+  merely claims arrived. See `src/capital_agent.py` `cmd_record`.
 - `execution/` — Human Execution Request lifecycle.
 
 Start from `START_HERE.md`. `AGENTS.md` and `CLAUDE.md` are only compatibility

@@ -54,7 +54,11 @@ In order, per `AI_OPERATING_MANUAL.md`:
 6b. `EXTERNAL_INTEGRATION.md` — canonical integration model with the Editorial Platform (EXP-001): External Business Data Adapter, PII firewall, External Cash Event, experiment lifecycle, BUSINESS_SIGNAL, Publication Package/Receipt, metric provenance; see `backlog/platform-integration.md` for open platform-side dependencies.
 7. `config/policy.json` — machine-enforced financial limits, including `autonomous_financial_execution_permitted` (always `false`).
 8. `config/system_governance.json` — machine-enforced change-governance rules.
-9. `data/ledger.csv` — the accounting source of truth (changes only via confirmed human execution).
+9. `data/ledger.csv` — the accounting source of truth. Changes only via a
+   confirmed Human Execution Request, or an External Cash Event that has
+   passed the full human-VERIFIED->RECONCILED pipeline
+   (`EXTERNAL_INTEGRATION.md`), or a narrow explicitly-audited administrative
+   entry (e.g. initial funding) -- never a bare, unattributed manual claim.
 10. `execution/human_requests/pending/` — recommendations waiting on the human.
 11. `experiments/active/` — open experiments.
 12. `journal/decisions/` — recent capital decisions.
@@ -129,9 +133,16 @@ reading (`AI_OPERATING_MANUAL.md`).
   `CRITICAL_DECISIONS.md`). Approval unblocks a Human Execution Request; it
   never itself moves money.
 - `data/ledger.csv` — append-only accounting ledger; `verified cash` and
-  `equity floor` are always derived from it, never asserted, and it only
-  changes via `capital_agent.py confirm-execution` or a direct manual
-  `record` for non-financial-execution entries (e.g. the initial funding).
+  `equity floor` are always derived from it, never asserted. It changes via
+  `capital_agent.py confirm-execution` (Human Execution Request), via
+  `src/business_integration.py post_external_cash_event_to_ledger` once an
+  External Cash Event has passed OBSERVED->REPORTED->VERIFIED->ATTRIBUTED->
+  RECONCILED (`EXTERNAL_INTEGRATION.md`), or via a narrow, explicitly-audited
+  `capital_agent.py record --admin-confirm --reason ...` for pure
+  administrative bookkeeping (e.g. the initial funding event). Direct
+  `record` of `revenue`/`refund`/`chargeback`/`other_external_inflow` or of
+  `buy`/`sell`/`capital_out`/`expense`/`fee`/`tax` without a completed
+  execution reference is refused -- see `src/capital_agent.py cmd_record`.
 
 ## 7. Self-criticism
 

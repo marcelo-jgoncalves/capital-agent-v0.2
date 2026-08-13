@@ -41,6 +41,16 @@ class CapitalAgentTests(unittest.TestCase):
         issues = ca.policy_check_proposal(1.00)
         self.assertEqual(issues, [])
 
+    def test_policy_accepts_zero_capital_proposal(self):
+        # amount == 0 is a valid, distinct case (e.g. a zero-capital
+        # experiment) -- it must not be rejected as invalid/missing input.
+        issues = ca.policy_check_proposal(0)
+        self.assertEqual(issues, [])
+
+    def test_policy_rejects_negative_amount(self):
+        issues = ca.policy_check_proposal(-1.0)
+        self.assertTrue(any("negative" in x for x in issues))
+
     def test_system_governance_enables_self_improvement(self):
         gov = ca.load_system_governance()
         self.assertTrue(gov["self_improvement_enabled"])
