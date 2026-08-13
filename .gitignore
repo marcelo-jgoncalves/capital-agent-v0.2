@@ -6,3 +6,5 @@ __pycache__/
 secrets/
 data/cache/
 *.log
+state/ai_runs/*.json
+!state/ai_runs/.gitkeep

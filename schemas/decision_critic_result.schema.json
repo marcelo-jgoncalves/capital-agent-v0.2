@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DecisionCriticResult",
+  "type": "object",
+  "required": ["verdict", "reasons", "missing_evidence"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["SUPPORT", "CHALLENGE", "INSUFFICIENT_EVIDENCE"]},
+    "reasons": {"type": "array", "items": {"type": "string"}},
+    "missing_evidence": {"type": "array", "items": {"type": "string"}}
+  }
+}

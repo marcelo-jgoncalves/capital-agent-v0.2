@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProviderRunResult",
+  "type": "object",
+  "required": ["status", "provider", "task_id", "task_type"],
+  "properties": {
+    "status": {"type": "string", "enum": ["SUCCEEDED", "FAILED", "REJECTED"]},
+    "provider": {"type": "string"},
+    "task_id": {"type": "string"},
+    "task_type": {"type": "string"}
+  }
+}

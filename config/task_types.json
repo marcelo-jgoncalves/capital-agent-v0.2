@@ -1,0 +1,22 @@
+{
+  "version": "0.1",
+  "note": "Provider-neutral reasoning/engineering task types the scheduler and reasoning router recognize. Adding a provider must never require adding a task type here; adding a task type must never name a specific provider. Canonical list also enforced in code at adapters/ai_providers/task_envelope.py:TASK_TYPES -- this file is documentation, not a second source of truth; keep the two in sync manually if either changes.",
+  "task_types": [
+    "TOPIC_DISCOVERY",
+    "TOPIC_CRITIC",
+    "CONTENT_BRIEF",
+    "DRAFT",
+    "EDITORIAL_CRITIC",
+    "FACT_CHECK",
+    "DECISION_CRITIC",
+    "BLIND_SECOND_OPINION",
+    "CODE_REVIEW",
+    "ADVERSARIAL_TESTS",
+    "POLICY_AUDIT",
+    "POSTMORTEM_REVIEW",
+    "SEO_REVIEW",
+    "COMMERCIAL_OPPORTUNITY_DISCOVERY"
+  ],
+  "provider_field": "provider = \"codex\" | \"claude\" | \"auto\" on each job/envelope; see MULTI_PROVIDER_REASONING.md",
+  "second_opinion_policy_reference": "src/reasoning_router.py second_opinion_policy()"
+}
