@@ -137,3 +137,38 @@ Every decision classified as critical under `CRITICAL_DECISIONS.md` requires exp
 ## 13. Evaluation requirement
 
 Material and critical allocations must be reviewable under `EVALUATION_CRITIC_SYSTEM.md`. A critic assessment is mandatory in every critical approval package.
+
+## 14. Domain and pre-existing platform assets are excluded from Capital Agent accounting
+
+The human owner may already own, or independently acquire/renew, a domain and
+a business platform (institutional site, blog) that pre-dates the Capital
+Agent. This section governs how such owner-provided assets are treated so
+they never distort the BRL 1,000 experiment's accounting.
+
+**Domain.** The domain is acquired and renewed by the owner independently of
+the Capital Agent's decisions. Its cost is never debited from the BRL 1,000
+starting capital, never counted as a cost of EXP-001 or any other experiment,
+and never used in any Capital Agent return-on-capital calculation. It is
+classified `EXTERNAL / OWNER-PROVIDED ASSET` with
+`attributable_to_capital_agent: false`. Do not estimate, invent or record a
+domain cost anywhere in the ledger or an experiment record.
+
+**Pre-activation platform costs.** All platform development, infrastructure
+and tooling performed or paid before the Capital Agent's activation of a
+platform-related experiment is a sunk cost external to the Capital Agent:
+`PRE-EXISTING / OWNER-PROVIDED ASSET`. Historical development hours, prior
+infrastructure spend, previously purchased tools/services, the domain, and
+prior intellectual work are never attributed to the Capital Agent's cost
+basis or used to inflate an experiment's apparent cost.
+
+**Incremental cost test.** After activation, a cost may be attributed to the
+Capital Agent (or a specific experiment such as EXP-001) only if all of the
+following hold: (1) it was incurred after the experiment's official
+activation; (2) it is directly attributable to the experiment or a Capital
+Agent decision; (3) the owner would not have incurred it anyway; (4) there is
+verifiable evidence of the amount; (5) the movement was executed by the human
+owner; (6) it was reconciled before entering the ledger. Only capital meeting
+all six conditions is "incremental capital deployed" for that experiment.
+Everything else — including the domain and any pre-activation platform
+spend — stays outside Capital Agent accounting permanently, not merely until
+activation.

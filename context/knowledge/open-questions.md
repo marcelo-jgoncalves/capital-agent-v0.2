@@ -93,21 +93,106 @@ AI operator does not have to rediscover them from scratch.
   post-mortem if it silently failed for a while, or just closing this
   question if it works cleanly).
 
-### Starter-kit digital product tied to marcelo-goncalves-blog — disregarded, not just paused
-- Raised: 2026-08-10. Superseded: 2026-08-10.
-- Status: **out of scope entirely for now**, not merely blocked. Human owner
-  instructed: "vamos desconsiderar a minha plataforma por enquanto. temos
-  que começar esse projeto do zero. se pudermos contar com ela no futuro, eu
-  aviso aqui" — i.e. do not plan around that project at all; the growth
-  vector must be built from zero, independent of it. If it ever becomes
-  available as an asset, the human owner will say so explicitly in this
-  same channel — do not proactively revisit or ask.
-- Why it matters: `DEC-20260810-875930` is now superseded on this specific
-  point by `DEC-20260810-<from-scratch-pivot>` (see `journal/decisions/`).
-  A future AI session should not treat the blog as a resource to build on
-  unless the human owner has said so in the interim.
-- What would resolve it: only an explicit future signal from the human
-  owner in conversation. Nothing to do until then.
+### `iadecifrada.com.br` as a channel — reopened by the human owner
+- Raised: 2026-08-10. Superseded: 2026-08-10 (same day).
+- Status: **back in scope, conditionally.** Originally disregarded
+  entirely ("vamos desconsiderar a minha plataforma por enquanto... se
+  pudermos contar com ela no futuro, eu aviso aqui" — see prior version of
+  this entry). The human owner has now given exactly that signal, in the
+  context of `DEC-20260810-7B41E9` (Addendum 8): the blog, once finished,
+  should become the channel for that candidate (and plausibly future ones)
+  instead of a standalone free-hosted page, specifically to solve a
+  credibility gap a domain-less page couldn't fully fix. Finishing the
+  blog itself remains the human owner's own, separately-tracked work — the
+  Capital Agent does not take on or track that work, only the decision to
+  target it as a channel once ready.
+- Why it matters: future growth-vector candidates sourced from here on
+  should consider `iadecifrada.com.br` a plausible eventual channel again,
+  rather than assuming (as the disregarded-since-2026-08-10 status
+  previously required) that everything must be built on throwaway
+  infrastructure from zero. This does not mean defaulting to it blindly —
+  each candidate should still weigh channel choice on its own merits
+  (timeliness sensitivity vs. the blog's unknown completion date), same as
+  `DEC-20260810-7B41E9` did explicitly.
+- What would resolve it fully: the blog actually reaching a "ready for
+  real content" state — no estimate given as of this entry.
+
+### Should the AWS Free Tier page become the first of a series, rather than a one-off?
+- Raised: 2026-08-10 (`DEC-20260810-7B41E9`), human owner asked whether
+  building a series of similar pages would be interesting.
+- Why it matters: a series would amortize fixed costs (domain/hosting
+  setup, and the earlier-declined AdSense idea specifically becomes more
+  plausible with accumulated multi-page traffic, per that addendum's own
+  revisit condition), compound audience/email-list growth faster than one
+  page, and reinforce topical SEO authority. But today's research session
+  also showed the supply of genuinely uncrowded candidates is scarce by
+  construction: 5 dated-event candidates were evaluated today
+  (`context/knowledge/rejected-opportunities.md`), only 1 (the AWS page)
+  survived crowding + primary-source-value checks. Committing to "a
+  series" as a plan risks assuming a cadence of good topics the sourcing
+  method has not yet proven it can sustain, and each page adds real,
+  non-automatable verification and maintenance labor (staleness risk),
+  not just writing time.
+- What would resolve it: do not commit to a series before this first page
+  has any real result (traffic, email signups) to learn from. Recommended
+  sequence: finish and ship the AWS Free Tier page alone first; treat "does
+  the sourcing method reliably find one good candidate per session, and
+  does a shipped page actually get any signal" as the two things this
+  first page needs to answer before scaling into a series is a capital/
+  labor decision worth making. Revisit explicitly once that first result
+  exists, not before.
+
+### Scheduler backlog discovered running unattended, and `CURRENT_STATE.md` found stale on this point
+- Raised: 2026-08-11 (discovered mid-session; human owner asked directly
+  "existe alguma automação rodando não é?").
+- What was found: a Windows Scheduled Task, `CapitalAgentScheduler`
+  (`Get-ScheduledTask`), has been running `scripts/run_scheduler.ps1` every
+  ~15 minutes since it was created on 2026-08-10T11:35:14-03:00, and is
+  still active and healthy (`LastTaskResult: 0`, next run ~15 min out at
+  any given check). It only calls `python src/scheduler.py run`, which is
+  purely deterministic per its own design (`START_HERE.md` section 9) — it
+  queues jobs based on repository state, it does **not** invoke an AI and
+  does **not** touch money, so the custody invariant is unaffected. But
+  nothing has been consuming the queue it builds: as of 2026-08-11,
+  `state/pending_jobs.json` held **20 unprocessed jobs** (3 `frequent`, 4
+  `daily`, 3 `weekly`, 5 `monthly`, 3 `quarterly`, plus 2 fired-trigger
+  jobs — `new_revenue_detected` and `human_execution_confirmation_received`
+  — from 2026-08-10T16:05), all still `queued`, none `completed`, several
+  marked `requires_ai_reasoning: true`.
+- A related, separate finding: `context/CURRENT_STATE.md`'s "Risks"
+  section currently reads "No scheduler run history yet; autonomous
+  operation cadence is not yet exercised in production" — this is **stale
+  and factually wrong** as of this discovery (there is 40+ entries of real
+  run history in `state/scheduler_state.json`). `update-context` was
+  re-run after this discovery and the line did not change, meaning that
+  section of the generator does not actually read `scheduler_state.json` —
+  it appears to be static/hardcoded text rather than the "generated
+  deterministically... do not hand-edit" guarantee the file's own header
+  claims for the whole document. This undermines trust in that specific
+  section and should be treated as a real generator bug, not just a
+  one-time stale fact.
+- Why it matters: (1) a real backlog of scheduled work exists and is
+  growing every day unattended — some of it (daily risk review, weekly
+  capital allocation review) is exactly the kind of thing this project
+  exists to keep current; (2) the two fired triggers
+  (`new_revenue_detected`, `human_execution_confirmation_received`) are
+  from 2026-08-10 and have not been looked at — worth checking they don't
+  represent something time-sensitive that was missed; (3) the
+  `CURRENT_STATE.md` staleness on this specific section means a future
+  session skimming just that file (as `START_HERE.md` step 1 recommends)
+  would be actively misled into thinking no automation has run yet.
+- Status: **explicitly paused, not processed.** Human owner instruction
+  this session: stop here, log it properly, revisit later. No job was
+  completed, no trigger investigated, and no fix was made to the
+  `update-context` generator during this session.
+- What would resolve it: a future session (1) processes or triages the 20
+  queued jobs (`python src/scheduler.py complete-job` per job, per
+  `scheduler/README.md`), starting with the two 2026-08-10 triggers since
+  those are event-driven rather than routine; (2) investigates and fixes
+  why `CURRENT_STATE.md`'s Risks section doesn't reflect
+  `scheduler_state.json` (likely a `src/capital_agent.py` generator gap —
+  a Class A/B system change per `SYSTEM_EVOLUTION.md`, not itself a capital
+  decision).
 
 ### NFS-e/MEI guide — on standby by explicit human owner decision
 - Raised: 2026-08-10 (`DEC-20260810-C5EA4F`).

@@ -40,3 +40,30 @@ A single incident belongs in a post-mortem, not here.
   complaint-sourced or first-hand-observed pain points above listicle
   brainstorming, and check competitive crowding *before* investing search
   effort in fleshing out an idea's business case, not after.
+
+### Assuming "dated event" sourcing is uncrowded regardless of topic type
+- First observed: 2026-08-10 (NFS-e MEI guide, `DEC-20260810-C5EA4F`)
+- Occurrences: 2 — the NFS-e MEI guide (regulatory) was genuinely uncrowded
+  in PT-BR; three non-regulatory "dated event" candidates tried afterward
+  per that decision's own revisit condition (Microsoft Publisher
+  discontinuation, Mercado Livre 2026 fee changes, WhatsApp Business API
+  2026 pricing change — all in `context/knowledge/rejected-opportunities.md`)
+  were all found already crowded by commercially-motivated PT-BR blogs
+  within the same research pass.
+- Pattern: "sourced from a live, dated event" (the fix proposed after the
+  first three listicle-sourced rejections) is necessary but not sufficient.
+  What actually made NFS-e uncrowded was that correctly answering it
+  required primary-source legal-text verification (Resolução CGSN 169/22
+  vs. 189/2026, municipal-vs-national ISS penalties) that most secondary
+  blogs got wrong or skipped — a real interpretive-difficulty moat.
+  Platform/vendor policy changes (marketplace fees, API pricing, software
+  EOL) have no equivalent moat: the facts are simple and one press release
+  away, so logistics/ERP/API-tooling vendors with an SEO/lead-gen incentive
+  cover them within days of announcement, every time. "Dated + narrow" is
+  not the differentiator; "dated + narrow + genuinely hard to correctly
+  interpret from primary sources" is.
+- System-improvement proposal: none yet. Next pass should filter dated-event
+  candidates by an explicit question — "does answering this correctly
+  require reconciling primary sources that conflict or are commonly
+  misread?" — before spending search budget on competitive-crowding checks,
+  rather than treating recency/narrowness alone as a good-enough filter.
