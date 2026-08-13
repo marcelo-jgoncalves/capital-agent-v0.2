@@ -115,9 +115,13 @@ def cash_balance() -> float:
     for row in read_ledger():
         amount = float(row["amount_brl"])
         typ = row["type"]
-        if typ in {"capital_in", "revenue", "sell", "refund"}:
+        if typ in {"capital_in", "revenue", "sell", "refund", "other_external_inflow"}:
             balance += amount
-        elif typ in {"expense", "buy", "fee", "tax", "capital_out"}:
+        elif typ in {"expense", "buy", "fee", "tax", "capital_out", "chargeback"}:
+            # chargeback: a REVERSAL of previously recognized revenue -- it
+            # must reduce cash/recognized revenue, never be added like a
+            # genuine refund-to-us. See src/business_integration.py
+            # CASH_EVENT_KIND_TO_LEDGER_TYPE.
             balance -= amount
         elif typ == "adjustment":
             balance += amount
@@ -293,7 +297,8 @@ RECORD_BLOCKED_TYPES = {"buy", "sell", "capital_out"}
 
 def cmd_record(args):
     allowed = {"capital_in", "revenue", "sell", "refund", "expense", "buy",
-               "fee", "tax", "capital_out", "adjustment"}
+               "fee", "tax", "capital_out", "adjustment", "chargeback",
+               "other_external_inflow"}
     if args.type not in allowed:
         raise SystemExit(f"unsupported ledger type: {args.type}")
     if args.type in RECORD_BLOCKED_TYPES:
@@ -318,7 +323,14 @@ def cmd_record(args):
 def cmd_new_experiment(args):
     exp_id = f"EXP-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     issues = policy_check_proposal(args.budget)
-    status = "blocked" if issues else "planned"
+    # Canonical experiment schema (see src/business_integration.py
+    # EXPERIMENT_LIFECYCLE_STATES / EXTERNAL_INTEGRATION.md): lifecycle_state
+    # is the single source of truth. New experiments always start PLANNED --
+    # policy issues found at proposal time are recorded in policy_issues,
+    # they do not create a separate "blocked" lifecycle state. Legacy
+    # 'state'/'status' fields are kept in sync with lifecycle_state, never
+    # diverging, per the migration note already present on EXP-001.
+    lifecycle_state = "PLANNED"
     data = {
         "id": exp_id,
         "created_at": now_iso(),
@@ -328,7 +340,17 @@ def cmd_new_experiment(args):
         "max_loss_brl": round(args.max_loss, 2),
         "success_metric": args.success_metric,
         "kill_condition": args.kill_condition,
-        "status": status,
+        "state": lifecycle_state,
+        "status": lifecycle_state.lower(),
+        "lifecycle_state": lifecycle_state,
+        "lifecycle_schema_version": "1.0",
+        "lifecycle_note": (
+            "lifecycle_state is the single source of truth for experiment "
+            "state (see EXTERNAL_INTEGRATION.md). The legacy 'state'/'status' "
+            "fields are kept in sync for backward compatibility and must not "
+            "diverge from lifecycle_state; new code should read "
+            "lifecycle_state."
+        ),
         "policy_issues": issues,
         "cash_flows": []
     }
@@ -340,7 +362,8 @@ def cmd_new_experiment(args):
         "title": args.title,
         "budget_brl": data["budget_brl"],
         "max_loss_brl": data["max_loss_brl"],
-        "status": status,
+        "status": data["status"],
+        "lifecycle_state": data["lifecycle_state"],
         "path": f"experiments/active/{exp_id}.json",
     })
     print(json.dumps(data, indent=2, ensure_ascii=False))

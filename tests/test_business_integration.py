@@ -415,5 +415,421 @@ class AlternativesComparisonTests(unittest.TestCase):
         self.assertEqual(comparison["platform_opportunity"]["id"], "EXP-001")
 
 
+# ---------------------------------------------------------------------------
+# Hardening: persistence, crash-safety, concurrency, chargeback semantics,
+# PII value-level checks, BusinessObservation/Signal split, schema
+# validation, metric temporal invariants, EXP-001 auto-activation guard.
+# ---------------------------------------------------------------------------
+
+import threading
+
+
+class CashEventPersistenceTests(BusinessIntegrationTestCase):
+    def _to_reconciled(self):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=100.0, source_system="stripe-export",
+            source_record_id="inv-persist-1", observed_at="2026-08-13T00:00:00Z",
+        )
+        ev = bi.report_external_cash_event(ev, report_source="file_adapter")
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="bank statement")
+        ev = bi.attribute_external_cash_event(ev)
+        ev = bi.reconcile_external_cash_event(ev, reconciled_by="human:owner")
+        return ev
+
+    def test_every_transition_is_persisted_to_disk(self):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=50.0, source_system="s", source_record_id="r-persist",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        ev = bi.report_external_cash_event(ev, report_source="file_adapter")
+        on_disk = json.loads((bi.EXTERNAL_CASH_EVENTS_DIR / f"{ev['id']}.json").read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["state"], "REPORTED")
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="x")
+        on_disk = json.loads((bi.EXTERNAL_CASH_EVENTS_DIR / f"{ev['id']}.json").read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["state"], "VERIFIED")
+        self.assertIsNotNone(on_disk["verification"])
+
+    def test_state_history_reconstructs_full_path(self):
+        ev = self._to_reconciled()
+        on_disk = json.loads((bi.EXTERNAL_CASH_EVENTS_DIR / f"{ev['id']}.json").read_text(encoding="utf-8"))
+        states_seen = [h["state"] for h in on_disk["state_history"]]
+        self.assertEqual(states_seen, ["OBSERVED", "REPORTED", "VERIFIED", "ATTRIBUTED", "RECONCILED"])
+
+    def test_load_external_cash_event_reads_persisted_state(self):
+        ev = self._to_reconciled()
+        loaded = bi.load_external_cash_event(ev["id"])
+        self.assertEqual(loaded["state"], "RECONCILED")
+
+    def test_list_external_cash_events_filters_by_state(self):
+        self._to_reconciled()
+        reconciled = bi.list_external_cash_events(state="RECONCILED")
+        self.assertEqual(len(reconciled), 1)
+        self.assertEqual(bi.list_external_cash_events(state="LEDGER_POSTED"), [])
+
+
+class LedgerCrashSafetyTests(BusinessIntegrationTestCase):
+    def setUp(self):
+        super().setUp()
+        self._ledger_orig = bi.LEDGER_FILE
+        self._ledger_tmp_dir = Path(tempfile.mkdtemp())
+        bi.LEDGER_FILE = self._ledger_tmp_dir / "ledger.csv"
+        bi.LEDGER_FILE.write_text("timestamp,type,category,amount_brl,description,reference\n", encoding="utf-8")
+
+    def tearDown(self):
+        bi.LEDGER_FILE = self._ledger_orig
+        shutil.rmtree(self._ledger_tmp_dir, ignore_errors=True)
+        super().tearDown()
+
+    def _real_append(self, typ, category, amount, desc, reference):
+        with bi.LEDGER_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"2026-08-13T00:00:00Z,{typ},{category},{amount:.2f},{desc},{reference}\n")
+
+    def _reconciled_event(self, ref="crash-1"):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=77.0, source_system="s", source_record_id=ref,
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        ev = bi.report_external_cash_event(ev, report_source="file_adapter")
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="x")
+        ev = bi.attribute_external_cash_event(ev)
+        return bi.reconcile_external_cash_event(ev, reconciled_by="human:owner")
+
+    def test_crash_after_ledger_write_before_state_persist_does_not_duplicate_on_retry(self):
+        """Simulates a crash between "ledger line written" and "event state
+        persisted as LEDGER_POSTED": append_ledger_fn writes the real ledger
+        line and then raises, as if the process died right after the OS
+        flushed the write but before this module could persist the new
+        state. A retry must not produce a second ledger line."""
+        ev = self._reconciled_event()
+
+        def crashing_append(typ, category, amount, desc, reference):
+            self._real_append(typ, category, amount, desc, reference)
+            raise RuntimeError("simulated crash after ledger write")
+
+        with self.assertRaises(RuntimeError):
+            bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=crashing_append)
+
+        # Event was never persisted as LEDGER_POSTED (crash happened before
+        # that write), so on disk it is still RECONCILED.
+        reloaded = bi.load_external_cash_event(ev["id"])
+        self.assertEqual(reloaded["state"], "RECONCILED")
+
+        # Retry with a working append function: must detect the ledger
+        # already has this reference and NOT write a second line.
+        calls = []
+        retried = bi.post_external_cash_event_to_ledger(
+            reloaded, append_ledger_fn=lambda *a: (calls.append(a), self._real_append(*a))[0]
+        )
+        self.assertEqual(retried["state"], "LEDGER_POSTED")
+        self.assertEqual(calls, [])  # append_ledger_fn was NOT called again
+
+        lines = bi.LEDGER_FILE.read_text(encoding="utf-8").strip().splitlines()
+        matching = [l for l in lines if ev["idempotency_key"] in l]
+        self.assertEqual(len(matching), 1)  # exactly one ledger line, no duplicate
+
+    def test_retry_after_crash_before_ledger_write_posts_exactly_once(self):
+        """Crash happens before the ledger line is even written (e.g. lock
+        acquired then process dies). Retry must still post exactly once."""
+        ev = self._reconciled_event(ref="crash-2")
+
+        def crashing_append(*a):
+            raise RuntimeError("simulated crash before ledger write completes")
+
+        with self.assertRaises(RuntimeError):
+            bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=crashing_append)
+
+        # lock file must have been released even though the call raised
+        wal_dir = bi.EXTERNAL_CASH_EVENTS_DIR / "_wal"
+        self.assertEqual(list(wal_dir.glob("*.lock")), [])
+
+        calls = []
+        retried = bi.post_external_cash_event_to_ledger(
+            ev, append_ledger_fn=lambda *a: (calls.append(a), self._real_append(*a))[0]
+        )
+        self.assertEqual(retried["state"], "LEDGER_POSTED")
+        self.assertEqual(len(calls), 1)
+
+    def test_concurrent_posts_of_same_event_only_post_once(self):
+        """Two threads race to post the same RECONCILED event (idempotency
+        key). Only one may actually append a ledger line; the other must
+        either no-op or block until the first finishes and then observe the
+        event as already posted."""
+        ev = self._reconciled_event(ref="concurrent-1")
+        append_calls = []
+        lock = threading.Lock()
+
+        def synchronized_append(typ, category, amount, desc, reference):
+            with lock:
+                self._real_append(typ, category, amount, desc, reference)
+                append_calls.append(reference)
+
+        results = []
+        errors = []
+
+        def worker():
+            try:
+                results.append(bi.post_external_cash_event_to_ledger(dict(ev), append_ledger_fn=synchronized_append))
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        self.assertEqual(len(append_calls), 1)  # exactly one ledger append happened
+        lines = bi.LEDGER_FILE.read_text(encoding="utf-8").strip().splitlines()
+        matching = [l for l in lines if ev["idempotency_key"] in l]
+        self.assertEqual(len(matching), 1)
+
+
+class DuplicateAndStaleTests(BusinessIntegrationTestCase):
+    def test_duplicate_submission_of_same_external_event_is_a_no_op(self):
+        kwargs = dict(kind="revenue", amount_brl=10.0, source_system="s",
+                      source_record_id="dup-1", observed_at="2026-08-13T00:00:00Z")
+        first = bi.observe_external_cash_event(**kwargs)
+        second = bi.observe_external_cash_event(**kwargs)
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(len(list(bi.EXTERNAL_CASH_EVENTS_DIR.glob("*.json"))), 1)
+
+    def test_stale_observed_event_is_detected(self):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=10.0, source_system="s", source_record_id="stale-1",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        # backdate the persisted state_history so it looks old
+        path = bi.EXTERNAL_CASH_EVENTS_DIR / f"{ev['id']}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["state_history"][0]["at"] = "2000-01-01T00:00:00+00:00"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        stale = bi.find_stale_cash_events(grace_period_seconds=3600, states=("OBSERVED",))
+        self.assertEqual([s["id"] for s in stale], [ev["id"]])
+
+    def test_fresh_observed_event_is_not_stale(self):
+        bi.observe_external_cash_event(
+            kind="revenue", amount_brl=10.0, source_system="s", source_record_id="fresh-1",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        stale = bi.find_stale_cash_events(grace_period_seconds=3600 * 24, states=("OBSERVED",))
+        self.assertEqual(stale, [])
+
+
+class ChargebackSemanticsTests(BusinessIntegrationTestCase):
+    def setUp(self):
+        super().setUp()
+        self._ledger_orig = bi.LEDGER_FILE
+        self._ledger_tmp_dir = Path(tempfile.mkdtemp())
+        bi.LEDGER_FILE = self._ledger_tmp_dir / "ledger.csv"
+        bi.LEDGER_FILE.write_text("timestamp,type,category,amount_brl,description,reference\n", encoding="utf-8")
+
+    def tearDown(self):
+        bi.LEDGER_FILE = self._ledger_orig
+        shutil.rmtree(self._ledger_tmp_dir, ignore_errors=True)
+        super().tearDown()
+
+    def test_chargeback_maps_to_its_own_ledger_type_not_refund_or_revenue(self):
+        self.assertEqual(bi.CASH_EVENT_KIND_TO_LEDGER_TYPE["chargeback"], "chargeback")
+        self.assertNotEqual(bi.CASH_EVENT_KIND_TO_LEDGER_TYPE["chargeback"], "revenue")
+
+    def test_chargeback_reverses_prior_recognized_revenue_in_balance(self):
+        # exercised at the capital_agent layer where cash_balance() lives;
+        # here we confirm the ledger line business_integration writes is
+        # typed 'chargeback' (a subtraction type), not 'refund'/'revenue'
+        # (addition types), so the two modules cannot disagree on sign.
+        ev = bi.observe_external_cash_event(
+            kind="chargeback", amount_brl=30.0, source_system="s", source_record_id="cb-1",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        ev = bi.report_external_cash_event(ev, report_source="file_adapter")
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="x")
+        ev = bi.attribute_external_cash_event(ev)
+        ev = bi.reconcile_external_cash_event(ev, reconciled_by="human:owner")
+        recorded = []
+        bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=lambda *a: recorded.append(a))
+        ledger_type = recorded[0][0]
+        self.assertEqual(ledger_type, "chargeback")
+
+    def test_capital_agent_cash_balance_subtracts_chargeback_and_adds_refund(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        import capital_agent as ca
+        orig_ledger_file = ca.LEDGER_FILE
+        tmp_dir = Path(tempfile.mkdtemp())
+        try:
+            ca.LEDGER_FILE = tmp_dir / "ledger.csv"
+            ca.LEDGER_FILE.write_text("timestamp,type,category,amount_brl,description,reference\n", encoding="utf-8")
+            ca.append_ledger("revenue", "external_cash_event", 100.0, "rev", "ref-1")
+            self.assertEqual(ca.cash_balance(), 100.0)
+            ca.append_ledger("chargeback", "external_cash_event", 40.0, "chargeback of rev", "ref-2")
+            self.assertEqual(ca.cash_balance(), 60.0)  # reduced, not increased
+            ca.append_ledger("refund", "external_cash_event", 10.0, "refund to us", "ref-3")
+            self.assertEqual(ca.cash_balance(), 70.0)  # refund-to-us still adds
+        finally:
+            ca.LEDGER_FILE = orig_ledger_file
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+class PIIValueHardeningTests(BusinessIntegrationTestCase):
+    def test_email_shaped_value_in_allowlisted_field_is_rejected(self):
+        with self.assertRaises(bi.PIIRejectedError):
+            bi.sanitize_business_payload({"service_interest": "reach me at someone@example.com"})
+
+    def test_phone_shaped_value_in_allowlisted_field_is_rejected(self):
+        with self.assertRaises(bi.PIIRejectedError):
+            bi.sanitize_business_payload({"landing_content": "call +55 11 91234-5678 please"})
+
+    def test_cpf_shaped_value_in_allowlisted_field_is_rejected(self):
+        with self.assertRaises(bi.PIIRejectedError):
+            bi.sanitize_business_payload({"company_size_band": "owner CPF 123.456.789-09"})
+
+    def test_clean_allowlisted_values_pass(self):
+        clean = bi.sanitize_business_payload({"service_interest": "accounting-automation", "utm_source": "newsletter"})
+        self.assertEqual(clean["service_interest"], "accounting-automation")
+
+    def test_ingest_business_signal_rejects_pii_shaped_value_in_extra(self):
+        with self.assertRaises(bi.PIIRejectedError):
+            bi.ingest_business_signal(
+                signal_type="lead_created", source_system="platform",
+                source_record_id="rec-pii-value", observed_at="2026-08-13T00:00:00Z",
+                metric_name="lead_count", metric_value=1, unit="count",
+                data_quality="observed",
+                extra={"service_interest": "email me at leaker@example.com"},
+            )
+
+
+class BusinessObservationTests(BusinessIntegrationTestCase):
+    def test_observation_is_distinct_entity_from_signal(self):
+        obs = bi.create_business_observation(
+            observation_type="lead_touch", source_system="platform",
+            source_record_id="touch-1", observed_at="2026-08-13T00:00:00Z",
+            metric_name="service_interest_mentions", metric_value=1, unit="count",
+        )
+        self.assertIn("observation_id", obs)
+        self.assertNotIn("signal_id", obs)
+
+    def test_signal_can_trace_back_to_observations(self):
+        obs1 = bi.create_business_observation(
+            observation_type="lead_touch", source_system="platform",
+            source_record_id="touch-1", observed_at="2026-08-13T00:00:00Z",
+        )
+        obs2 = bi.create_business_observation(
+            observation_type="lead_touch", source_system="platform",
+            source_record_id="touch-2", observed_at="2026-08-13T00:00:00Z",
+        )
+        sig = bi.create_business_signal_entity(
+            signal_type="recurring_lead_pattern", origin="lead_analysis",
+            evidence_refs=[obs1["observation_id"], obs2["observation_id"]], period="2026-08",
+            derived_from_observation_ids=[obs1["observation_id"], obs2["observation_id"]],
+        )
+        self.assertEqual(set(sig["derived_from_observation_ids"]), {obs1["observation_id"], obs2["observation_id"]})
+
+    def test_observation_ingestion_is_idempotent(self):
+        kwargs = dict(observation_type="lead_touch", source_system="platform",
+                      source_record_id="touch-idem", observed_at="2026-08-13T00:00:00Z")
+        first = bi.create_business_observation(**kwargs)
+        second = bi.create_business_observation(**kwargs)
+        self.assertEqual(first["observation_id"], second["observation_id"])
+
+
+class SchemaValidationTests(BusinessIntegrationTestCase):
+    def test_valid_business_signal_passes(self):
+        record = bi.ingest_business_signal(
+            signal_type="lead_created", source_system="platform",
+            source_record_id="rec-schema-1", observed_at="2026-08-13T00:00:00Z",
+            metric_name="lead_count", metric_value=1, unit="count",
+            data_quality="observed",
+        )
+        bi.validate_against_schema(record, "business_signal.schema.json")  # no raise
+
+    def test_schema_violating_payload_is_rejected(self):
+        bad = {"signal_id": "x"}  # missing required fields
+        with self.assertRaises(bi.SchemaValidationError):
+            bi.validate_against_schema(bad, "business_signal.schema.json")
+
+    def test_invalid_enum_value_rejected(self):
+        bad = {
+            "signal_id": "x", "signal_type": "t", "source_system": "s",
+            "source_record_id": "r", "observed_at": "2026-01-01T00:00:00Z",
+            "retrieved_at": "2026-01-01T00:00:00Z", "metric_name": "m",
+            "data_quality": "not-a-real-quality", "schema_version": "1.0",
+        }
+        with self.assertRaises(bi.SchemaValidationError):
+            bi.validate_against_schema(bad, "business_signal.schema.json")
+
+    def test_cash_event_persisted_on_disk_is_schema_valid(self):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=5.0, source_system="s", source_record_id="schema-ev-1",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        on_disk = json.loads((bi.EXTERNAL_CASH_EVENTS_DIR / f"{ev['id']}.json").read_text(encoding="utf-8"))
+        bi.validate_against_schema(on_disk, "external_cash_event.schema.json")  # no raise
+
+
+class MetricTemporalSemanticsTests(BusinessIntegrationTestCase):
+    def test_observed_at_defaults_to_retrieved_at_when_omitted(self):
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="x", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage=None, data_quality="observed",
+        )
+        self.assertEqual(obs["observed_at"], obs["retrieved_at"])
+
+    def test_observed_at_in_future_relative_to_retrieved_at_rejected(self):
+        import datetime as _dt
+        future = (_dt.datetime.now(_dt.timezone.utc).replace(microsecond=0) + _dt.timedelta(days=1)).isoformat()
+        with self.assertRaises(bi.MetricObservationError):
+            bi.create_metric_observation(
+                experiment_id="EXP-001", metric_name="x", value=1, unit="count",
+                period="2026-08", source="s", environment="production",
+                coverage=None, data_quality="observed", observed_at=future,
+            )
+
+    def test_observed_at_before_retrieved_at_is_accepted(self):
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="x", value=1, unit="count",
+            period="2026-08", source="s", environment="production",
+            coverage=None, data_quality="observed", observed_at="2026-08-01T00:00:00+00:00",
+        )
+        self.assertEqual(obs["observed_at"], "2026-08-01T00:00:00+00:00")
+
+
+class ExperimentAutoActivationGuardTests(unittest.TestCase):
+    def test_transition_to_active_without_human_authorization_is_blocked(self):
+        experiment = {"lifecycle_state": "READY_FOR_ACTIVATION"}
+        with self.assertRaises(bi.AutoActivationBlockedError):
+            bi.apply_experiment_lifecycle_transition(experiment, "ACTIVE")
+
+    def test_transition_to_active_without_authorized_by_is_blocked_even_if_flag_set(self):
+        experiment = {"lifecycle_state": "READY_FOR_ACTIVATION"}
+        with self.assertRaises(bi.AutoActivationBlockedError):
+            bi.apply_experiment_lifecycle_transition(experiment, "ACTIVE", human_authorized=True, authorized_by="")
+
+    def test_transition_to_active_with_explicit_human_authorization_succeeds(self):
+        experiment = {"lifecycle_state": "READY_FOR_ACTIVATION"}
+        updated = bi.apply_experiment_lifecycle_transition(
+            experiment, "ACTIVE", human_authorized=True, authorized_by="human:marcelo"
+        )
+        self.assertEqual(updated["lifecycle_state"], "ACTIVE")
+        self.assertEqual(updated["status"], "active")
+
+    def test_non_active_transitions_do_not_require_human_authorization(self):
+        experiment = {"lifecycle_state": "PLANNED"}
+        updated = bi.apply_experiment_lifecycle_transition(experiment, "READY_FOR_ACTIVATION")
+        self.assertEqual(updated["lifecycle_state"], "READY_FOR_ACTIVATION")
+
+
+class HistoricalMigrationTests(BusinessIntegrationTestCase):
+    def test_legacy_record_missing_optional_keys_is_migrated_forward(self):
+        legacy = {
+            "id": "ECE-LEGACY-1", "kind": "revenue", "amount_brl": 10.0, "currency": "BRL",
+            "source_system": "s", "source_record_id": "legacy-1", "idempotency_key": "s:legacy-1",
+            "observed_at": "2026-08-13T00:00:00Z", "state": "OBSERVED",
+        }
+        migrated = bi.migrate_legacy_cash_event_record(legacy)
+        bi.validate_against_schema(migrated, "external_cash_event.schema.json")  # no raise
+        self.assertIn("state_history", migrated)
+        self.assertTrue(migrated["state_history"])
+
+
 if __name__ == "__main__":
     unittest.main()

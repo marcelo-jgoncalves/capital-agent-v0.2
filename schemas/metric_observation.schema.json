@@ -3,7 +3,7 @@
   "title": "MetricObservation",
   "description": "Canonical experimental metric observation with mandatory provenance. See src/business_integration.py create_metric_observation() / filter_official_evaluation_observations().",
   "type": "object",
-  "required": ["id", "experiment_id", "metric_name", "unit", "period", "source", "environment", "retrieved_at", "data_quality", "eligible_for_official_evaluation", "schema_version"],
+  "required": ["id", "experiment_id", "metric_name", "unit", "period", "source", "environment", "observed_at", "retrieved_at", "data_quality", "eligible_for_official_evaluation", "schema_version"],
   "properties": {
     "id": {"type": "string"},
     "experiment_id": {"type": "string"},
@@ -13,6 +13,7 @@
     "period": {"type": "string"},
     "source": {"type": "string"},
     "environment": {"type": "string", "enum": ["production", "dev", "test", "staging", "smoke", "e2e", "synthetic", "admin", "unknown"]},
+    "observed_at": {"type": "string"},
     "retrieved_at": {"type": "string"},
     "coverage": {"type": ["string", "null"]},
     "data_quality": {"type": "string", "enum": ["observed", "aggregated", "manually_reported", "verified", "estimated", "unavailable"]},

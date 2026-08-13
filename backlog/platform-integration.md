@@ -10,6 +10,19 @@ AI"). This file is the canonical registry referenced by
 Priorities: `P0` blocks safe/correct EXP-001 activation. `P1` needed for
 reliable evaluation/automation. `P2` later improvement. `P3` optional.
 
+**2026-08-13 hardening pass**: a Capital-Agent-SIDE audit
+(`journal/reviews/business-integration-hardening-audit.md`) fixed 15
+internal correctness/safety gaps in `src/business_integration.py` (crash-safe
+persistence and ledger idempotency, chargeback sign, PII value-level
+hardening, BusinessObservation/BUSINESS_SIGNAL split, runtime schema
+validation, metric temporal invariants, 7 scheduler triggers wired,
+`requires_ai_reasoning` routing, hard code-level guard against
+auto-activating any experiment). None of these items were blocked on the
+platform side, so this pass does **not** unblock or add any PLAT-0xx item
+below -- every P0 item here still requires the Editorial Platform side to
+ship the corresponding capability before EXP-001 can be activated. Listed
+for traceability only.
+
 ---
 
 ## PLAT-001 — Sanitized business telemetry export (P0)
