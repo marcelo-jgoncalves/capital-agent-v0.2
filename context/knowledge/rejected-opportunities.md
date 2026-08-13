@@ -82,6 +82,57 @@ record when the evaluation was material enough to warrant one.
   the established players genuinely don't cover well (e.g. a specific
   instrument type or workflow gap) — not yet researched.
 
+### Microsoft Publisher discontinuation (Oct 2026) "what to do next" guide
+- Date: 2026-08-10
+- Category: digital product / guide (non-regulatory, tried per the NFS-e
+  standby decision's revisit condition — a lower-liability, purely
+  how-to/organizational topic with no compliance stakes)
+- Reason for rejection: real, dated, narrow-audience event (Microsoft
+  Publisher support ends 2026-10-13, affecting small businesses/nonprofits/
+  schools with archived `.pub` files) that at first looked like a good
+  non-regulatory analog to the NFS-e pattern. `WebSearch` found the topic is
+  already crowded, including in Portuguese specifically: Brazilian/PT
+  outlets (`anamid.com.br`, `rz1.com.br`, `tecnoblog.net`, `tugatech.com.pt`)
+  have already published "o que fazer" guides, and the migration-tool
+  vendor itself (Markzware, via `pt.markzware.com`) already runs a
+  Portuguese-language guide plus paid conversion products (DesignMarkz,
+  MarkzPortal) aimed at exactly this audience. Unlike NFS-e (a same-country
+  regulatory change secondary PT-BR sources hadn't organized well), this is
+  a single global vendor announcement that gets translated/covered
+  everywhere immediately — structurally hard to find an uncovered gap in.
+  Killed at research stage, no build effort spent.
+- Decision record: none dedicated; logged here only.
+- Revisit condition: only if a sub-angle is found that existing PT-BR
+  coverage and the vendor's own tools don't address (e.g. a specific
+  vertical's `.pub` template workflow) — not researched further.
+
+### Mercado Livre 2026 fee/rule changes "how to adapt" guide
+- Date: 2026-08-10
+- Category: digital product / guide (non-regulatory, platform-policy)
+- Reason for rejection: real, dated, narrow-sounding event (Mercado Livre
+  changed Full/shipping fee structure starting March 2026), but `WebSearch`
+  found it is already extensively covered by commercially-motivated PT-BR
+  blogs (tecnospeed, upseller, conectenvios, base.com, gosmarter, ferax,
+  eblue) — logistics/ERP vendors write this content routinely as lead-gen
+  for their own tools, so any real fee change gets a "how to adapt" guide
+  within days. No gap found. Killed at research stage.
+- Decision record: none dedicated; logged here only.
+- Revisit condition: none identified.
+
+### WhatsApp Business API 2026 pricing-change guide
+- Date: 2026-08-10
+- Category: digital product / guide (non-regulatory, platform-policy)
+- Reason for rejection: same crowding pattern as Mercado Livre above —
+  `WebSearch` found multiple PT-BR vendor/agency blogs (socialhub, nexe,
+  chatlabs, digisac, digitro, zuper, aleguimas) already publishing detailed
+  breakdowns of the Oct 2026 per-message pricing change, several from
+  companies selling WhatsApp API tooling directly. Also, the change turns
+  out to not even affect the mass of small businesses (those using the free
+  WhatsApp Business app, not the paid API), shrinking the addressable
+  audience further. Killed at research stage.
+- Decision record: none dedicated; logged here only.
+- Revisit condition: none identified.
+
 ## Pattern noticed across these three rejections
 
 All three candidates were sourced the same way: generic `WebSearch` for

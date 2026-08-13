@@ -1,0 +1,59 @@
+{
+  "id": "EXP-20260813-62C22E",
+  "code": "EXP-001",
+  "title": "EXP-001 -- Existing Platform Commercialization",
+  "created_at": "2026-08-13T16:22:31-03:00",
+  "hypothesis": "A previously built business platform (institutional site + blog), owner-provided and pre-existing, can act as an acquisition/content/lead-generation channel and a base for services or products that generate a return on the incremental capital the Capital Agent deploys into it, once the platform is production-ready and the human owner explicitly activates the experiment. This hypothesis is not declared true; it must be tested after activation.",
+  "state": "PLANNED",
+  "status": "planned",
+  "activation": {
+    "activated": false,
+    "activation_date": null,
+    "activation_gate": "experiments/EXP-001-ACTIVATION-CHECKLIST.md",
+    "note": "Status is PLANNED / NOT ACTIVATED. Do not infer activation from platform publication or from any technical milestone; only an explicit human activation record (see AI_OPERATING_MANUAL.md / CRITICAL_DECISIONS.md) may set activated=true and populate activation_date."
+  },
+  "budget_brl": 0.0,
+  "max_loss_brl": 0.0,
+  "capital_deployed_brl": 0.0,
+  "maximum_plausible_loss_brl": 0.0,
+  "policy_issues": [
+    "amount must be greater than zero -- expected while status=planned; no capital has been requested or deployed yet"
+  ],
+  "success_metric": "Not yet finalized. To be set in the activation package before the state can move to READY_FOR_ACTIVATION. Provisional candidates: verified qualified leads and/or verified attributable revenue within N weeks of activation (N to be fixed at activation time).",
+  "failure_criteria": "Not yet finalized -- set at activation.",
+  "kill_condition": "Not yet finalized. Provisional candidate: no verified lead or attributable revenue signal after a defined evidence window despite the platform being in production.",
+  "scaling_conditions": "Not yet finalized -- set at activation, per INVESTMENT_POLICY.md section 6 (evidence-based scaling, not price/revenue alone).",
+  "review_frequency": "Not yet finalized -- expected weekly once ACTIVE, per ROADMAP.md/config/schedules.json conventions.",
+  "cost_attribution": {
+    "domain": {
+      "classification": "EXTERNAL / OWNER-PROVIDED ASSET",
+      "attributable_to_capital_agent": false,
+      "note": "The owner acquires/renews the domain independently of the Capital Agent. Domain cost is never debited from the BRL 1,000 experiment capital, never counted in EXP-001 cost, and never used in EXP-001 or Capital Agent ROIC. See INVESTMENT_POLICY.md section 14 and ARCHITECTURE.md."
+    },
+    "pre_activation_platform_costs": {
+      "classification": "PRE-EXISTING / OWNER-PROVIDED ASSET (sunk cost, external to the Capital Agent)",
+      "attributable_to_capital_agent": false,
+      "note": "All platform development, infrastructure and tooling performed or paid before Capital Agent activation is a sunk cost belonging to the owner, not the experiment. Only capital committed after activation and meeting the incremental-cost test (INVESTMENT_POLICY.md section 14) may be attributed to EXP-001."
+    }
+  },
+  "attributable_costs": [],
+  "attributable_revenues": [],
+  "metrics": {
+    "note": "No data collected. Fields intentionally left empty/null rather than estimated -- do not fabricate analytics, leads, traffic or revenue before real instrumentation exists.",
+    "acquisition": {"organic_sessions": null, "referral": null, "direct": null, "search_queries": null, "impressions": null, "ctr": null},
+    "engagement": {"page_views": null, "engaged_sessions": null, "cta_interactions": null},
+    "lead_generation": {"leads": null, "qualified_leads": null, "source_attribution": null},
+    "commercial_outcome": {"proposals": null, "conversions": null, "verified_revenue_brl": null, "attributable_revenue_brl": null, "incremental_costs_brl": null, "profit_brl": null, "roic": null, "time_to_first_lead": null, "time_to_first_revenue": null}
+  },
+  "revenue_attribution_states": ["verified_attributable", "partially_attributable", "unattributed", "uncertain"],
+  "lessons": [],
+  "critic_reviews": [],
+  "decision_references": [],
+  "cash_flows": [],
+  "revisions": [
+    {
+      "date": "2026-08-13T16:22:31-03:00",
+      "change": "Created as PLANNED/NOT ACTIVATED per the platform-integration restructuring (see SYSTEM_EVOLUTION.md and journal/reviews/platform-integration-restructure-readiness.md). No budget requested, no capital deployed, no activation date set. This record intentionally does not start the EXP-001 performance clock."
+    }
+  ]
+}

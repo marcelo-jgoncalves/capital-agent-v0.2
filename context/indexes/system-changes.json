@@ -78,5 +78,21 @@
     "class": "A",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260810-A54ECC.md"
+  },
+  {
+    "id": "SYS-20260813-4149BC",
+    "date": "2026-08-13T16:30:00-03:00",
+    "title": "Platform-integration restructuring (EXP-001 preparation)",
+    "class": "B",
+    "status": "IMPLEMENTED_VALIDATED",
+    "path": "journal/system_changes/SYS-20260813-4149BC.md"
+  },
+  {
+    "id": "SYS-20260813-PLATFORM",
+    "date": "2026-08-13T19:30:00-03:00",
+    "title": "Platform-as-first-asset restructuring (EXP-001, domain/sunk-cost exclusion, PLANNED activation gate) -- closeout",
+    "class": "B",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260813-PLATFORM.md"
   }
 ]

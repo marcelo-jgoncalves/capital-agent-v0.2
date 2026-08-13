@@ -3,7 +3,7 @@
 Generated deterministically by `python src/capital_agent.py update-context`.
 Do not hand-edit; edit the underlying sources (ledger, config, experiments, journal) and regenerate.
 
-- Generated at: 2026-08-10T16:51:09-03:00
+- Generated at: 2026-08-13T16:27:00-03:00
 - Repository/policy version: 0.2
 - Operating phase: 0 (research/proposals/simulations only; see `ROADMAP.md`)
 - Custody invariant: only the human owner may move real money; the Capital Agent has no financial write capability at any phase (`AI_OPERATING_MANUAL.md`).
@@ -39,7 +39,7 @@ None. No financial execution is currently waiting on the human owner.
 
 ## Active experiments
 
-None.
+- EXP-20260813-62C22E: EXP-001 -- Existing Platform Commercialization — status=planned, budget=BRL 0.0, max_loss=BRL 0.0
 
 ## Archived experiments
 
@@ -52,14 +52,13 @@ None.
 ## Recent decisions (journal/decisions/)
 
 - DEC-20260810-451C32
+- DEC-20260810-7B41E9
 - DEC-20260810-875930
 - DEC-20260810-A032A0
 - DEC-20260810-C5EA4F
 
 ## Recent system changes (journal/system_changes/)
 
-- SYS-20260810-8E8A9C
-- SYS-20260810-A54ECC
 - SYS-20260810-B3962E
 - SYS-20260810-BD6581
 - SYS-20260810-C76D60
@@ -68,6 +67,8 @@ None.
 - SYS-20260810-E87857
 - SYS-20260810-EBED61
 - SYS-20260810-F9CEAA
+- SYS-20260813-4149BC
+- SYS-20260813-PLATFORM
 
 ## Risks
 

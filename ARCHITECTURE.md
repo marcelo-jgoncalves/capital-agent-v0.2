@@ -192,6 +192,33 @@ See "Human Execution Request lifecycle" above and `execution/README.md`. This
 is the only sanctioned path from a Capital Agent recommendation to a real
 financial operation.
 
+### 6a. Platform-based experiments (e.g. EXP-001)
+
+An owner-provided business platform (existing site/blog, pre-dating the
+Capital Agent) may become the subject of an experiment such as EXP-001. Two
+rules govern this, always:
+
+- **Asset, not identity.** The platform keeps its own business/professional
+  identity. It is never rebranded as "the Capital Agent's site," and it never
+  exposes internal experiment state, balances, journals, prompts or
+  decision-making mechanics. The Capital Agent acts behind the scenes
+  (analysis, content research, measurement, recommendation); the platform's
+  public face stays the owner's.
+- **Domain and sunk costs excluded.** See `INVESTMENT_POLICY.md` section 14.
+  The domain and any pre-activation platform development are owner-provided
+  and never enter Capital Agent accounting. Only capital deployed after
+  explicit activation, meeting the incremental-cost test, is attributable.
+
+Public-facing publication in the owner's name is, by default, a critical
+decision (`CRITICAL_DECISIONS.md`, "Identity / reputation / external
+representation") until a narrow, explicit, auditable, revocable batch
+authorization exists for a defined class of publication. One approved article
+never authorizes future, different, or unlimited publication.
+
+Platform-related experiments compete for capital like any other opportunity
+(`INVESTMENT_POLICY.md` section 6); pre-existing the Capital Agent grants no
+permanent priority.
+
 ### 8. Replaceable research workers
 
 Possible roles, run by whichever AI operator is configured (see the AI
