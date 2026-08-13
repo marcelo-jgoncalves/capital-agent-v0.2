@@ -51,6 +51,7 @@ In order, per `AI_OPERATING_MANUAL.md`:
 4. `CRITICAL_DECISIONS.md` — decisions requiring explicit human authorization.
 5. `SYSTEM_EVOLUTION.md` — how the system may change itself (and what it may never enable).
 6. `ARCHITECTURE.md` — components, the Human Execution Request lifecycle, the scheduler.
+6b. `EXTERNAL_INTEGRATION.md` — canonical integration model with the Editorial Platform (EXP-001): External Business Data Adapter, PII firewall, External Cash Event, experiment lifecycle, BUSINESS_SIGNAL, Publication Package/Receipt, metric provenance; see `backlog/platform-integration.md` for open platform-side dependencies.
 7. `config/policy.json` — machine-enforced financial limits, including `autonomous_financial_execution_permitted` (always `false`).
 8. `config/system_governance.json` — machine-enforced change-governance rules.
 9. `data/ledger.csv` — the accounting source of truth (changes only via confirmed human execution).

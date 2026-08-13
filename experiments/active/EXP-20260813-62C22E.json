@@ -6,6 +6,22 @@
   "hypothesis": "A previously built business platform (institutional site + blog), owner-provided and pre-existing, can act as an acquisition/content/lead-generation channel and a base for services or products that generate a return on the incremental capital the Capital Agent deploys into it, once the platform is production-ready and the human owner explicitly activates the experiment. This hypothesis is not declared true; it must be tested after activation.",
   "state": "PLANNED",
   "status": "planned",
+  "lifecycle_state": "PLANNED",
+  "lifecycle_schema_version": "1.0",
+  "lifecycle_note": "lifecycle_state is the single source of truth for experiment state as of the editorial-platform-integration restructuring (see EXTERNAL_INTEGRATION.md). The legacy 'state'/'status' fields are kept in sync for backward compatibility with existing readers and must not diverge from lifecycle_state; new code should read lifecycle_state.",
+  "capital_budget_brl": 0.0,
+  "resource_budget": {
+    "operator_time_minutes": null,
+    "publications_planned": null,
+    "ai_runs_budget": null,
+    "note": "Non-financial resource budget, auxiliary only. operator_time_minutes is never auto-converted to money in the ledger or in ROIC (see INVESTMENT_POLICY.md and EXTERNAL_INTEGRATION.md)."
+  },
+  "non_financial_risks": [
+    "reputational: content published under the owner's platform could misrepresent expertise or make unverifiable claims",
+    "privacy: mishandling of lead data collected by the platform could expose personal data",
+    "operational: dependency on a platform still being finished, with unknown reliability",
+    "contractual: none currently identified"
+  ],
   "activation": {
     "activated": false,
     "activation_date": null,
@@ -50,10 +66,42 @@
   "critic_reviews": [],
   "decision_references": [],
   "cash_flows": [],
+  "funnel_definition": {
+    "note": "Narrow initial economic mechanism per EXTERNAL_INTEGRATION.md / spec section 5.10. EXP-001 tests exactly one funnel, not simultaneous ads+affiliates+products+consulting+newsletter+SEO.",
+    "stages": ["relevant_content", "qualified_traffic", "cta", "lead", "qualified_lead", "proposal_or_conversation", "attributable_revenue"],
+    "top_of_funnel_metrics_are_diagnostic_only": ["impressions", "sessions"],
+    "priority_economic_metrics": ["qualified_leads", "proposals", "attributable_revenue_brl", "incremental_cost_brl", "profit_brl", "roic_when_applicable"],
+    "roic_zero_capital_policy": "If capital_deployed_brl == 0, ROIC is undefined (None), never infinite and never divided by zero -- see compute_roic() in src/business_integration.py. Use profit_brl, qualified_leads and attributable_revenue_brl as the primary signals instead."
+  },
+  "readiness_for_activation": {
+    "checked_at": null,
+    "ready": false,
+    "missing": [
+      "hypothesis is present but success_metric/failure_criteria/kill_condition are not finalized",
+      "measurement_window not finalized",
+      "attribution_model not finalized",
+      "qualified_lead_definition not finalized",
+      "revenue_attribution_definition not finalized",
+      "resource_budget values are null (not yet estimated)",
+      "incremental_cost_policy not finalized",
+      "privacy_policy_ref not set",
+      "metrics_source not connected (platform has no sanitized telemetry export yet -- see backlog/platform-integration.md PLAT-001)",
+      "dev_prod_separation_confirmed is false (platform traffic-environment separation not yet available -- backlog PLAT-004)",
+      "lead_capture_functional not confirmed",
+      "publication_handoff_defined not finalized (Publication Receipt not yet producible by platform -- backlog PLAT-003)",
+      "external_revenue_reconciliation_defined not finalized",
+      "open P0 backlog items: PLAT-001, PLAT-002, PLAT-003, PLAT-004"
+    ],
+    "note": "Computed conceptually against src/business_integration.py check_ready_for_activation() preconditions during this session. EXP-001 remains PLANNED, not READY_FOR_ACTIVATION, because multiple P0 platform dependencies are open. See backlog/platform-integration.md."
+  },
   "revisions": [
     {
       "date": "2026-08-13T16:22:31-03:00",
       "change": "Created as PLANNED/NOT ACTIVATED per the platform-integration restructuring (see SYSTEM_EVOLUTION.md and journal/reviews/platform-integration-restructure-readiness.md). No budget requested, no capital deployed, no activation date set. This record intentionally does not start the EXP-001 performance clock."
+    },
+    {
+      "date": "2026-08-13T18:00:00-03:00",
+      "change": "Migrated to the canonical experiment lifecycle schema (EXTERNAL_INTEGRATION.md / src/business_integration.py): added lifecycle_state (single source of truth, kept in sync with legacy state/status), capital_budget_brl, resource_budget (non-financial, operator_time_minutes never auto-monetized), non_financial_risks, a narrow single-funnel economic mechanism definition replacing any implicit multi-channel scope, and an explicit readiness_for_activation assessment. No history was removed; lifecycle_state remains PLANNED because multiple P0 platform-integration backlog items are open (see backlog/platform-integration.md). This migration does not activate the experiment."
     }
   ]
 }
