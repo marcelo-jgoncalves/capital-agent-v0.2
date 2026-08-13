@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -55,8 +56,75 @@ def load_json(path: Path, default):
 
 
 def save_json(path: Path, data) -> None:
+    """Atomic write: write to a sibling temp file then os.replace() it onto
+    the target. os.replace is a single filesystem rename, so a crash
+    mid-write can never leave `path` holding a truncated/partial JSON file
+    -- readers always see either the previous complete content or the new
+    complete content, never a corrupt in-between state (P2 hardening,
+    prompt-hardening-final-capital-agent-v0.2.md section 10)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp_path = path.parent / f".{path.name}.tmp-{uuid.uuid4().hex[:8]}"
+    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+SCHEDULER_SNAPSHOT_FILE = STATE_DIR / "_scheduler_snapshot.json"
+
+
+def save_scheduler_snapshot(state: dict, pending: list[dict]) -> None:
+    """Persist scheduler_state.json and pending_jobs.json as one durable
+    transaction (P2 hardening, prompt-hardening-final-capital-agent-v0.2.md
+    section 10). Each save_json() call above is atomic on its own (temp +
+    os.replace), but the two legacy files (checkpoint vs. resulting job
+    ticket) were previously written by two INDEPENDENT save_json() calls --
+    a crash between them can still leave a checkpoint recorded with no
+    corresponding job, or a job queued whose checkpoint never advanced
+    (letting the same trigger/frequency re-fire and re-enqueue next tick).
+
+    Fix: write both pieces of state together into ONE file
+    (_scheduler_snapshot.json) via a single atomic save_json() call first --
+    this is the durable write-ahead record of the transaction. Only after
+    that succeeds are the two legacy files mirrored from it, each also
+    atomically. If the process crashes after the snapshot write but during
+    or between the legacy mirror writes, the snapshot is already complete
+    and consistent; load_scheduler_state()/load_pending_jobs() detect any
+    legacy file that disagrees with the snapshot and re-derive it before
+    returning, so a restart can never observe a checkpoint without its job
+    or a job without its checkpoint, even though the two legacy files remain
+    physically separate for backward compatibility (`scheduler.py status` /
+    `pending-jobs`, START_HERE.md)."""
+    snapshot = {"scheduler_state": state, "pending_jobs": pending}
+    save_json(SCHEDULER_SNAPSHOT_FILE, snapshot)
+    save_json(SCHEDULER_STATE_FILE, state)
+    save_json(PENDING_JOBS_FILE, pending)
+
+
+def _reconcile_legacy_files_from_snapshot() -> None:
+    """If a durable snapshot exists and either legacy file disagrees with it
+    (the crash-between-writes case above), re-derive both legacy files from
+    the snapshot before any read. Idempotent and cheap when already in
+    sync."""
+    if not SCHEDULER_SNAPSHOT_FILE.exists():
+        return
+    try:
+        snapshot = json.loads(SCHEDULER_SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if "scheduler_state" not in snapshot or "pending_jobs" not in snapshot:
+        return
+
+    def _current(path: Path):
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    if _current(SCHEDULER_STATE_FILE) != snapshot["scheduler_state"]:
+        save_json(SCHEDULER_STATE_FILE, snapshot["scheduler_state"])
+    if _current(PENDING_JOBS_FILE) != snapshot["pending_jobs"]:
+        save_json(PENDING_JOBS_FILE, snapshot["pending_jobs"])
 
 
 def load_schedules() -> dict:
@@ -68,6 +136,7 @@ def load_triggers() -> list[dict]:
 
 
 def load_scheduler_state() -> dict:
+    _reconcile_legacy_files_from_snapshot()
     return load_json(SCHEDULER_STATE_FILE, {
         "last_run_at": None,
         "last_frequency_run": {},
@@ -78,6 +147,7 @@ def load_scheduler_state() -> dict:
 
 
 def load_pending_jobs() -> list[dict]:
+    _reconcile_legacy_files_from_snapshot()
     return load_json(PENDING_JOBS_FILE, [])
 
 
@@ -102,6 +172,17 @@ def enqueue(pending: list[dict], job_key: str, kind: str, requires_ai_reasoning:
 
 
 def due_frequencies(schedules: dict, state: dict, now: datetime) -> list[str]:
+    # Timezone-aware (prompt-hardening-final-capital-agent-v0.2.md section
+    # 6): reuse business_integration._parse_iso, which normalizes a
+    # tz-naive timestamp to UTC rather than comparing raw strings or raising
+    # on a naive/aware mismatch. `now` itself may be naive or aware
+    # depending on the caller; normalize it the same way so both sides are
+    # always comparable as real instants, never accidentally by lexical
+    # string order or a TypeError from mixed naive/aware datetimes.
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
     due = []
     last_run = state.get("last_frequency_run", {})
     for name, cfg in schedules.items():
@@ -112,8 +193,14 @@ def due_frequencies(schedules: dict, state: dict, now: datetime) -> list[str]:
         if last is None:
             due.append(name)
             continue
-        last_dt = datetime.fromisoformat(last)
-        if (now - last_dt).total_seconds() >= interval * 60:
+        last_dt = bi._parse_iso(last)
+        if last_dt is None:
+            # Unparseable/corrupt checkpoint: treat as due rather than
+            # silently never firing again (fail loud toward safety, not
+            # toward starvation of scheduled work).
+            due.append(name)
+            continue
+        if (now - last_dt.astimezone(timezone.utc)).total_seconds() >= interval * 60:
             due.append(name)
     return due
 
@@ -259,11 +346,8 @@ def check_deterministic_triggers(triggers: list[dict], state: dict) -> list[dict
         ts_raw = rec.get("retrieved_at")
         if not src or not ts_raw:
             continue
-        try:
-            ts = datetime.fromisoformat(ts_raw)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-        except ValueError:
+        ts = bi._parse_iso(ts_raw)
+        if ts is None:
             continue
         if src not in latest_by_source or ts > latest_by_source[src]:
             latest_by_source[src] = ts
@@ -283,10 +367,10 @@ def check_deterministic_triggers(triggers: list[dict], state: dict) -> list[dict
         window_days = exp.get("measurement_window_days") or exp.get("measurement_window")
         if not activated_at or not window_days:
             continue
+        activated_dt = bi._parse_iso(activated_at)
+        if activated_dt is None:
+            continue
         try:
-            activated_dt = datetime.fromisoformat(activated_at)
-            if activated_dt.tzinfo is None:
-                activated_dt = activated_dt.replace(tzinfo=timezone.utc)
             window_days = float(window_days)
         except (ValueError, TypeError):
             continue
@@ -348,8 +432,17 @@ def cmd_run(_args):
         # point calling business_integration.apply_experiment_lifecycle_transition
         # with human_authorized=True can do that (see AutoActivationBlockedError).
         requires_ai = bool(trigger_def.get("requires_ai_reasoning", True))
+        # job_key is deterministic from the trigger id and WHAT fired (its
+        # detail), not wall-clock time: if this process crashes after
+        # writing pending_jobs.json but before writing scheduler_state.json
+        # (so the state snapshot that would mark this firing "known" never
+        # lands), the next run will detect the "same" firing again from
+        # unchanged repository state and must be deduped against the
+        # already-queued job rather than enqueuing a second, timestamp-
+        # differentiated duplicate. See P2 #8, prompt-hardening-final
+        # section 10 ("duplicate trigger" test).
         job = enqueue(
-            pending, job_key=f"trigger:{f['trigger_id']}:{now_iso()}",
+            pending, job_key=f"trigger:{f['trigger_id']}:{f['detail']}",
             kind="trigger" if requires_ai else "trigger_deterministic",
             requires_ai_reasoning=requires_ai,
             context_hint=f"Trigger '{f['trigger_id']}' fired: {f['detail']}",
@@ -365,8 +458,14 @@ def cmd_run(_args):
     })
     state["run_history"] = state["run_history"][-50:]
 
-    save_json(SCHEDULER_STATE_FILE, state)
-    save_json(PENDING_JOBS_FILE, pending)
+    # Persist checkpoint + job tickets as one durable transaction (see
+    # save_scheduler_snapshot): a crash at any point either leaves the prior
+    # complete transaction intact, or lands the new one complete, never a
+    # checkpoint/job pair that disagree. job_key is also deterministic (not
+    # wall-clock-suffixed, see above), so even a legacy-file drift edge case
+    # a caller manages to observe mid-transaction resolves to a safe dedupe
+    # rather than a duplicate job on retry.
+    save_scheduler_snapshot(state, pending)
     print(json.dumps({"due_frequencies": due, "fired_triggers": fired, "jobs_queued": queued}, indent=2))
 
 
@@ -392,7 +491,11 @@ def cmd_complete_job(args):
             remaining.append(j)
     if completed is None:
         raise SystemExit(f"no queued job with id {args.id}")
-    save_json(PENDING_JOBS_FILE, remaining)
+    # Keep the snapshot in sync too, not just the legacy pending_jobs.json
+    # file, so a subsequent load's reconciliation does not resurrect the
+    # just-completed job from a now-stale snapshot.
+    state = load_scheduler_state()
+    save_scheduler_snapshot(state, remaining)
     print(json.dumps(completed, indent=2))
 
 
