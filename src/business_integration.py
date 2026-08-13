@@ -27,12 +27,23 @@ Design constraints enforced here (see EXTERNAL_INTEGRATION.md for rationale):
 """
 from __future__ import annotations
 
+import csv
 import json
+import os
+import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    import jsonschema
+    _HAS_JSONSCHEMA = True
+except ImportError:  # pragma: no cover - exercised only if dep missing
+    jsonschema = None
+    _HAS_JSONSCHEMA = False
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "state"
@@ -40,12 +51,72 @@ BUSINESS_SIGNALS_DIR = STATE_DIR / "business_signals"
 EXTERNAL_CASH_EVENTS_DIR = STATE_DIR / "external_cash_events"
 PUBLICATIONS_DIR = STATE_DIR / "publications"
 METRIC_OBSERVATIONS_DIR = STATE_DIR / "metric_observations"
+SCHEMAS_DIR = ROOT / "schemas"
+LEDGER_FILE = ROOT / "data" / "ledger.csv"
 
 SCHEMA_VERSION = "1.0"
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON to `path` crash-safely: write to a sibling temp file, then
+    os.replace() (atomic on POSIX and Windows) onto the final path. A crash
+    mid-write leaves either the old file intact or the new one fully written
+    -- never a truncated/corrupt file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + f".tmp-{uuid.uuid4().hex[:8]}")
+    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+# ---------------------------------------------------------------------------
+# Runtime JSON Schema validation
+# ---------------------------------------------------------------------------
+
+_SCHEMA_CACHE: dict[str, dict] = {}
+
+
+class SchemaValidationError(ValueError):
+    pass
+
+
+def _load_schema(schema_filename: str) -> Optional[dict]:
+    if schema_filename in _SCHEMA_CACHE:
+        return _SCHEMA_CACHE[schema_filename]
+    path = SCHEMAS_DIR / schema_filename
+    if not path.exists():
+        return None
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    _SCHEMA_CACHE[schema_filename] = schema
+    return schema
+
+
+def validate_against_schema(record: dict, schema_filename: str) -> None:
+    """Validate `record` against schemas/<schema_filename> at runtime. Raises
+    SchemaValidationError on any violation. If the jsonschema package is
+    unavailable, falls back to a minimal required-fields + enum check so
+    validation is never silently skipped."""
+    schema = _load_schema(schema_filename)
+    if schema is None:
+        return  # schema file missing; nothing to validate against
+    if _HAS_JSONSCHEMA:
+        validator = jsonschema.Draft7Validator(schema)
+        errors = sorted(validator.iter_errors(record), key=lambda e: e.path)
+        if errors:
+            messages = "; ".join(f"{list(e.path)}: {e.message}" for e in errors)
+            raise SchemaValidationError(f"{schema_filename}: {messages}")
+        return
+    # Minimal stdlib fallback validator (required fields + enums only).
+    for req in schema.get("required", []):
+        if req not in record:
+            raise SchemaValidationError(f"{schema_filename}: missing required field {req!r}")
+    for key, prop in schema.get("properties", {}).items():
+        if key in record and "enum" in prop and record[key] is not None:
+            if record[key] not in prop["enum"]:
+                raise SchemaValidationError(f"{schema_filename}: {key!r} value {record[key]!r} not in {prop['enum']}")
 
 
 # ---------------------------------------------------------------------------
@@ -85,11 +156,65 @@ class PIIRejectedError(ValueError):
     in a way that could hide PII)."""
 
 
+# ---------------------------------------------------------------------------
+# PII value-level hardening (defense in depth beyond field-name allowlisting)
+# ---------------------------------------------------------------------------
+# Even an allowlisted field name (e.g. "landing_content", "service_interest")
+# can carry a PII-shaped *value* if a caller pastes free text into it. These
+# heuristics catch the common shapes; they are intentionally conservative
+# (may over-flag) because false rejection is safe and false acceptance is not.
+
+_EMAIL_VALUE_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+_PHONE_VALUE_RE = re.compile(r"(?:\+?\d[\d\-\s().]{7,}\d)")
+_CPF_VALUE_RE = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b")
+_CNPJ_VALUE_RE = re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b")
+
+# Fields where a long/free-text value is expected and additionally checked
+# for embedded PII-shaped substrings (as opposed to fields that are already
+# short enumerations/ids and are cheap to check universally too).
+_PII_VALUE_CHECKED_FIELDS = BUSINESS_PAYLOAD_ALLOWLIST
+
+
+def _value_has_pii_shape(value: str) -> Optional[str]:
+    if _EMAIL_VALUE_RE.search(value):
+        return "email-shaped value"
+    if _CPF_VALUE_RE.search(value):
+        return "CPF-shaped value"
+    if _CNPJ_VALUE_RE.search(value):
+        return "CNPJ-shaped value"
+    if _PHONE_VALUE_RE.search(value):
+        return "phone-number-shaped value"
+    return None
+
+
+def assert_no_pii_shaped_values(payload: dict) -> None:
+    """Hard-fail if any string value (at any nesting depth, in any key --
+    including allowlisted keys) looks like it embeds PII, e.g. someone
+    pastes an email address into a free-text 'note' or 'service_interest'
+    field. This is a value-level check, distinct from (and in addition to)
+    the field-*name* allowlist/denylist above."""
+    def _walk(obj, path=""):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                _walk(v, f"{path}{k}.")
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                _walk(item, f"{path}[{i}].")
+        elif isinstance(obj, str):
+            reason = _value_has_pii_shape(obj)
+            if reason:
+                raise PIIRejectedError(f"PII-shaped value at {path.rstrip('.')}: {reason}")
+    _walk(payload)
+
+
 def sanitize_business_payload(payload: dict) -> dict:
     """Allowlist-filter an external business payload. Denylisted keys are
     always stripped even if a caller mistakenly widens the allowlist.
     Returns a NEW dict; never mutates the input in place (defense against a
-    caller reusing/logging the raw object after "sanitization").
+    caller reusing/logging the raw object after "sanitization"). Also
+    hard-rejects the payload if any *value* of an allowlisted field looks
+    like it embeds PII (email/phone/CPF/CNPJ shaped substrings) -- the
+    allowlist only vouches for field names, never for their contents.
     """
     if not isinstance(payload, dict):
         raise PIIRejectedError("payload must be a JSON object")
@@ -101,6 +226,7 @@ def sanitize_business_payload(payload: dict) -> dict:
         if lowered_key not in BUSINESS_PAYLOAD_ALLOWLIST:
             continue
         clean[key] = value
+    assert_no_pii_shaped_values(clean)
     return clean
 
 
@@ -228,13 +354,79 @@ def ingest_business_signal(
         "schema_version": SCHEMA_VERSION,
         **sanitized_extra,
     }
+    validate_against_schema(record, "business_signal.schema.json")
     record, created = _write_json_idempotent(BUSINESS_SIGNALS_DIR, signal_id, idempotency_key, record)
     record["_created"] = created
     return record
 
 
 # ---------------------------------------------------------------------------
-# BUSINESS_SIGNAL entity (distinct from topic candidate)
+# BusinessObservation: one raw/individual external data point (e.g. "one lead
+# asked about X on this date"). Distinct from BusinessSignal (below), which
+# is the higher-level, evidence-with-confidence-and-provenance entity that a
+# BusinessSignal derives from one or more BusinessObservation records. The
+# link is explicit and traceable via BusinessObservation.observation_id
+# appearing in BusinessSignal.evidence_refs / derived_from_observation_ids.
+# ---------------------------------------------------------------------------
+
+BUSINESS_OBSERVATIONS_DIR_NAME = "business_observations"
+
+
+class BusinessObservationError(ValueError):
+    pass
+
+
+def create_business_observation(
+    *,
+    observation_type: str,
+    source_system: str,
+    source_record_id: str,
+    observed_at: str,
+    detail: Optional[str] = None,
+    metric_name: Optional[str] = None,
+    metric_value: Optional[float] = None,
+    unit: Optional[str] = None,
+    experiment_id: Optional[str] = None,
+) -> dict:
+    """Record one raw external observation ("3 leads asked about X this
+    week" is itself a BusinessSignal built FROM several of these smaller
+    facts, e.g. one BusinessObservation per lead-touch). A BusinessObservation
+    carries no confidence/intensity scoring of its own -- that synthesis
+    belongs to BusinessSignal. Idempotent on (source_system, source_record_id,
+    observation_type)."""
+    if not source_system or not source_record_id:
+        raise BusinessObservationError("source_system and source_record_id are required for provenance")
+    if not observed_at:
+        raise BusinessObservationError("observed_at is required")
+    if detail:
+        assert_no_pii_shaped_values({"detail": detail})
+    obs_dir = STATE_DIR / BUSINESS_OBSERVATIONS_DIR_NAME
+    idem_key = f"{source_system}:{source_record_id}:{observation_type}"
+    obs_id = f"BOBS-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
+    record = {
+        "observation_id": obs_id,
+        "observation_type": observation_type,
+        "source_system": source_system,
+        "source_record_id": source_record_id,
+        "observed_at": observed_at,
+        "retrieved_at": now_iso(),
+        "detail": detail,
+        "metric_name": metric_name,
+        "metric_value": metric_value,
+        "unit": unit,
+        "experiment_id": experiment_id,
+        "idempotency_key": idem_key,
+        "schema_version": SCHEMA_VERSION,
+    }
+    record, created = _write_json_idempotent(obs_dir, obs_id, idem_key, record)
+    record["_created"] = created
+    return record
+
+
+# ---------------------------------------------------------------------------
+# BUSINESS_SIGNAL entity (distinct from topic candidate, and distinct from
+# BusinessObservation above -- a BusinessSignal is a pattern claim derived
+# FROM one or more BusinessObservation records, never a raw fact itself).
 # ---------------------------------------------------------------------------
 
 VALID_BUSINESS_SIGNAL_STATUS = {"new", "under_review", "promoted_to_opportunity_candidate", "rejected", "stale"}
@@ -254,10 +446,16 @@ def create_business_signal_entity(
     confidence: Optional[float] = None,
     limitations: Optional[str] = None,
     experiment_id: Optional[str] = None,
+    derived_from_observation_ids: Optional[list] = None,
 ) -> dict:
     """Create a BUSINESS_SIGNAL entity. This answers "is there evidence of
     demand/business opportunity", distinct from an editorial `topic
-    candidate` (which answers "what could we write about"). Never
+    candidate` (which answers "what could we write about"), and distinct
+    from a BusinessObservation (a single raw fact). A BusinessSignal
+    aggregates/derives from one or more BusinessObservation records; that
+    relationship is made explicit and traceable via
+    `derived_from_observation_ids` (BusinessObservation.observation_id
+    values) in addition to the free-form `evidence_refs`. Never
     auto-promotes to an opportunity candidate -- that requires a separate,
     explicit reasoning step (promote_business_signal_to_opportunity)."""
     if signal_type == "topic_candidate":
@@ -274,6 +472,7 @@ def create_business_signal_entity(
         "signal_type": signal_type,
         "origin": origin,
         "evidence_refs": evidence_refs,
+        "derived_from_observation_ids": derived_from_observation_ids or [],
         "period": period,
         "intensity": intensity,
         "confidence": confidence,
@@ -334,6 +533,19 @@ TRUSTED_READONLY_FINANCIAL_ADAPTERS: set[str] = set()
 
 CASH_EVENT_KINDS = {"revenue", "refund", "chargeback", "other_external_inflow"}
 
+# Ledger `type` used for each ExternalCashEvent kind, and whether it adds to
+# (True) or subtracts from (False) cash / recognized revenue. A chargeback is
+# a REVERSAL of previously recognized revenue -- it must reduce cash/revenue,
+# not be posted as a same-signed inflow like a genuine refund-to-us. See
+# src/capital_agent.py cash_balance() which must treat "chargeback" as a
+# subtraction and "refund"/"other_external_inflow" as additions.
+CASH_EVENT_KIND_TO_LEDGER_TYPE = {
+    "revenue": "revenue",
+    "refund": "refund",
+    "chargeback": "chargeback",
+    "other_external_inflow": "other_external_inflow",
+}
+
 
 class CashEventStateError(ValueError):
     pass
@@ -345,6 +557,61 @@ class CashEventVerificationError(ValueError):
 
 def _cash_event_idempotency_key(source_system: str, source_record_id: str) -> str:
     return f"{source_system}:{source_record_id}"
+
+
+def _cash_event_path(event_id: str) -> Path:
+    return EXTERNAL_CASH_EVENTS_DIR / f"{event_id}.json"
+
+
+def _persist_cash_event(record: dict) -> dict:
+    """Crash-safe persistence of the FULL current record (including
+    state_history) to state/external_cash_events/<id>.json. This is what
+    makes every OBSERVED->...->LEDGER_POSTED transition durable: callers
+    that only used the in-memory return value and never called this would
+    lose the transition on process exit. Every transition function below
+    calls this before returning."""
+    on_disk = {k: v for k, v in record.items() if k != "_created"}
+    validate_against_schema(on_disk, "external_cash_event.schema.json")
+    _atomic_write_json(_cash_event_path(record["id"]), on_disk)
+    return record
+
+
+def load_external_cash_event(event_id: str) -> dict:
+    path = _cash_event_path(event_id)
+    if not path.exists():
+        raise CashEventStateError(f"no persisted ExternalCashEvent with id {event_id!r}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def list_external_cash_events(*, state: Optional[str] = None) -> list[dict]:
+    EXTERNAL_CASH_EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+    out = []
+    for p in sorted(EXTERNAL_CASH_EVENTS_DIR.glob("*.json")):
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if state is None or rec.get("state") == state:
+            out.append(rec)
+    return out
+
+
+def migrate_legacy_cash_event_record(record: dict) -> dict:
+    """Historical-compatibility shim: state files written by the earlier
+    (pre-hardening) implementation are missing nothing structurally (the
+    schema didn't change), but may be missing `_created`/newer optional keys
+    or may have been left stale in memory-only form (never persisted at
+    all -- those simply won't exist on disk and are not "migrated", they are
+    lost, which is exactly the bug fix #1 addresses going forward). This
+    function fills in any missing optional keys so older records validate
+    against the current schema/consumers without raising."""
+    migrated = dict(record)
+    migrated.setdefault("verification", None)
+    migrated.setdefault("attribution", None)
+    migrated.setdefault("ledger_reference", None)
+    migrated.setdefault("schema_version", SCHEMA_VERSION)
+    migrated.setdefault("state_history", [{"state": migrated.get("state", "OBSERVED"), "at": migrated.get("observed_at", now_iso()), "by": "migration:unknown"}])
+    return migrated
 
 
 def observe_external_cash_event(
@@ -381,9 +648,36 @@ def observe_external_cash_event(
         "ledger_reference": None,
         "schema_version": SCHEMA_VERSION,
     }
+    validate_against_schema(data, "external_cash_event.schema.json")
     record, created = _write_json_idempotent(EXTERNAL_CASH_EVENTS_DIR, event_id, idem_key, data)
     record["_created"] = created
     return record
+
+
+def find_stale_cash_events(*, grace_period_seconds: float, states: tuple = ("OBSERVED",)) -> list[dict]:
+    """Return persisted ExternalCashEvents currently sitting in one of
+    `states` whose most recent state_history entry is older than
+    `grace_period_seconds`. Used by the `attribution_pending_too_long`-style
+    staleness checks and by operational monitoring; never mutates state."""
+    now = datetime.now(timezone.utc)
+    stale = []
+    for rec in list_external_cash_events():
+        if rec.get("state") not in states:
+            continue
+        history = rec.get("state_history") or []
+        if not history:
+            continue
+        last_at_raw = history[-1].get("at")
+        try:
+            last_at = datetime.fromisoformat(last_at_raw)
+            if last_at.tzinfo is None:
+                last_at = last_at.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        age_s = (now - last_at.astimezone(timezone.utc)).total_seconds()
+        if age_s >= grace_period_seconds:
+            stale.append({**rec, "_age_seconds": age_s})
+    return stale
 
 
 def _advance_cash_event(event: dict, new_state: str, *, actor: str, note: str = "") -> dict:
@@ -399,7 +693,8 @@ def _advance_cash_event(event: dict, new_state: str, *, actor: str, note: str = 
 
 
 def report_external_cash_event(event: dict, *, report_source: str, note: str = "") -> dict:
-    return _advance_cash_event(event, "REPORTED", actor=report_source, note=note)
+    updated = _advance_cash_event(event, "REPORTED", actor=report_source, note=note)
+    return _persist_cash_event(updated)
 
 
 def verify_external_cash_event(
@@ -438,7 +733,7 @@ def verify_external_cash_event(
         )
     updated = _advance_cash_event(event, "VERIFIED", actor=verifier)
     updated["verification"] = {"verified_at": now_iso(), "verifier": verifier}
-    return updated
+    return _persist_cash_event(updated)
 
 
 def attribute_external_cash_event(
@@ -466,34 +761,105 @@ def attribute_external_cash_event(
         attribution["status"] = "ATTRIBUTED"
     updated = _advance_cash_event(event, "ATTRIBUTED", actor="system:attribution")
     updated["attribution"] = attribution
-    return updated
+    return _persist_cash_event(updated)
 
 
 def reconcile_external_cash_event(event: dict, *, reconciled_by: str, note: str = "") -> dict:
-    return _advance_cash_event(event, "RECONCILED", actor=reconciled_by, note=note)
+    updated = _advance_cash_event(event, "RECONCILED", actor=reconciled_by, note=note)
+    return _persist_cash_event(updated)
 
 
-def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn) -> dict:
+def _ledger_reference_posted(reference: str) -> bool:
+    """Check the ledger file itself (not just in-memory/local state) for a
+    row whose reference column equals `reference`. This is the crash-safety
+    backstop: if a previous process crashed AFTER appending the ledger line
+    but BEFORE persisting the event's LEDGER_POSTED state, this lets a retry
+    detect that the line already exists and skip re-appending, instead of
+    relying purely on an in-memory guard that a crash would have destroyed."""
+    if not LEDGER_FILE.exists():
+        return False
+    with LEDGER_FILE.open(encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header:
+            return False
+        try:
+            ref_idx = header.index("reference")
+        except ValueError:
+            ref_idx = len(header) - 1
+        for row in reader:
+            if len(row) > ref_idx and row[ref_idx] == reference:
+                return True
+    return False
+
+
+class LedgerPostLockError(CashEventStateError):
+    """Raised when another process appears to be posting the same
+    idempotency key concurrently and does not finish within the wait
+    budget."""
+
+
+def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_lock_wait_s: float = 2.0) -> dict:
     """Advance RECONCILED -> LEDGER_POSTED and post exactly one ledger entry,
     using the idempotency_key as the ledger reference so re-running this
     function on an already-posted event is a no-op rather than a duplicate
     entry. `append_ledger_fn` is injected (see capital_agent.append_ledger)
-    so this module never needs to know the ledger file format directly."""
+    so this module never needs to know the ledger file format directly.
+
+    Crash-safety: uses a write-ahead file lock (atomic O_CREAT|O_EXCL) keyed
+    on the idempotency_key plus a check of the ledger file itself (not just
+    in-memory event.state) before appending, so a crash between "decided to
+    post" and "wrote the ledger line" cannot produce a duplicate line on
+    retry, and two concurrent callers racing on the same idempotency_key
+    cannot both post.
+    """
     if event["state"] == "LEDGER_POSTED":
         return event  # idempotent no-op
     if event["state"] != "RECONCILED":
         raise CashEventStateError(f"cannot post to ledger from state {event['state']}; must be RECONCILED")
-    ledger_type = "revenue" if event["kind"] == "revenue" else "refund"
-    append_ledger_fn(
-        ledger_type,
-        "external_cash_event",
-        event["amount_brl"],
-        f"External cash event {event['id']} ({event['kind']}) from {event['source_system']}",
-        event["idempotency_key"],
-    )
-    updated = _advance_cash_event(event, "LEDGER_POSTED", actor="system:ledger_post")
-    updated["ledger_reference"] = event["idempotency_key"]
-    return updated
+
+    idem_key = event["idempotency_key"]
+    wal_dir = EXTERNAL_CASH_EVENTS_DIR / "_wal"
+    wal_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = wal_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", idem_key) + ".lock")
+
+    acquired = False
+    start = time.monotonic()
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            acquired = True
+            break
+        except FileExistsError:
+            if _ledger_reference_posted(idem_key):
+                break  # another process already finished posting it
+            if time.monotonic() - start > max_lock_wait_s:
+                raise LedgerPostLockError(
+                    f"could not acquire ledger-post lock for {idem_key!r} within "
+                    f"{max_lock_wait_s}s (concurrent post appears to be in progress)"
+                )
+            time.sleep(0.02)
+
+    try:
+        if not _ledger_reference_posted(idem_key):
+            ledger_type = CASH_EVENT_KIND_TO_LEDGER_TYPE[event["kind"]]
+            append_ledger_fn(
+                ledger_type,
+                "external_cash_event",
+                event["amount_brl"],
+                f"External cash event {event['id']} ({event['kind']}) from {event['source_system']}",
+                idem_key,
+            )
+        updated = _advance_cash_event(event, "LEDGER_POSTED", actor="system:ledger_post")
+        updated["ledger_reference"] = idem_key
+        return _persist_cash_event(updated)
+    finally:
+        if acquired:
+            try:
+                lock_path.unlink()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +888,49 @@ def validate_experiment_transition(current_state: str, new_state: str) -> None:
         raise ExperimentLifecycleError(f"unknown current lifecycle_state: {current_state!r}")
     if new_state not in EXPERIMENT_LIFECYCLE_TRANSITIONS.get(current_state, set()):
         raise ExperimentLifecycleError(f"invalid experiment transition {current_state} -> {new_state}")
+
+
+class AutoActivationBlockedError(ExperimentLifecycleError):
+    """Raised whenever any code path attempts to move an experiment's
+    lifecycle_state to ACTIVE without explicit, non-empty human
+    authorization. This is a hard code-level guard: no deterministic
+    trigger, scheduler job, or AI-routed job may ever set lifecycle_state to
+    ACTIVE on its own. See EXTERNAL_INTEGRATION.md and
+    AI_OPERATING_MANUAL.md -- ACTIVE requires an explicit human action,
+    always."""
+
+
+def apply_experiment_lifecycle_transition(
+    experiment: dict,
+    new_state: str,
+    *,
+    human_authorized: bool = False,
+    authorized_by: str = "",
+) -> dict:
+    """The ONLY sanctioned way to change experiment.lifecycle_state. Applies
+    validate_experiment_transition, then hard-refuses any transition INTO
+    ACTIVE unless human_authorized=True with a non-empty authorized_by
+    (a human identifier/statement) -- no deterministic code, trigger, or AI
+    job can set this flag on the experiment's own initiative; it can only be
+    supplied by a human-facing entry point (e.g. an interactive CLI command
+    that requires the operator to type a confirmation)."""
+    current_state = experiment.get("lifecycle_state")
+    validate_experiment_transition(current_state, new_state)
+    if new_state == "ACTIVE" and not (human_authorized and authorized_by):
+        raise AutoActivationBlockedError(
+            "refused: moving an experiment to ACTIVE requires human_authorized=True "
+            "and a non-empty authorized_by (human identifier). No automated code "
+            "path -- including deterministic scheduler triggers -- may activate an "
+            "experiment on its own."
+        )
+    updated = dict(experiment)
+    updated["lifecycle_state"] = new_state
+    updated["state"] = new_state  # legacy field kept in sync, per migration note
+    updated["status"] = new_state.lower()  # legacy field kept in sync, per migration note
+    if new_state == "ACTIVE":
+        updated["activated_at"] = now_iso()
+        updated["activated_by"] = authorized_by
+    return updated
 
 
 READY_FOR_ACTIVATION_REQUIRED_FIELDS = [
@@ -659,6 +1068,18 @@ class MetricObservationError(ValueError):
     pass
 
 
+def _parse_iso(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def create_metric_observation(
     *,
     experiment_id: str,
@@ -671,11 +1092,32 @@ def create_metric_observation(
     coverage: Optional[str],
     data_quality: str,
     limitations: Optional[str] = None,
+    observed_at: Optional[str] = None,
 ) -> dict:
+    """Create a metric observation. `retrieved_at` (when THIS system fetched
+    the value) is always stamped now(). `observed_at` (when the underlying
+    event/period the metric describes actually happened) is optional but,
+    when supplied, MUST NOT be later than retrieved_at -- a metric cannot be
+    observed in the future relative to when it was retrieved. When omitted,
+    observed_at defaults to retrieved_at (the conservative "as of now"
+    assumption), never to some fabricated earlier time."""
     if environment not in VALID_ENVIRONMENTS:
         raise MetricObservationError(f"invalid environment: {environment!r}")
     if data_quality not in VALID_DATA_QUALITY:
         raise MetricObservationError(f"invalid data_quality: {data_quality!r}")
+    retrieved_at = now_iso()
+    if observed_at:
+        observed_dt = _parse_iso(observed_at)
+        retrieved_dt = _parse_iso(retrieved_at)
+        if observed_dt is None:
+            raise MetricObservationError(f"observed_at is not a valid ISO-8601 timestamp: {observed_at!r}")
+        if retrieved_dt is not None and observed_dt > retrieved_dt:
+            raise MetricObservationError(
+                f"observed_at ({observed_at}) is after retrieved_at ({retrieved_at}); "
+                "a metric cannot be observed in the future relative to when it was retrieved"
+            )
+    else:
+        observed_at = retrieved_at
     obs_id = f"MOBS-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
     record = {
         "id": obs_id,
@@ -686,13 +1128,15 @@ def create_metric_observation(
         "period": period,
         "source": source,
         "environment": environment,
-        "retrieved_at": now_iso(),
+        "observed_at": observed_at,
+        "retrieved_at": retrieved_at,
         "coverage": coverage,
         "data_quality": data_quality,
         "limitations": limitations,
         "eligible_for_official_evaluation": environment == "production",
         "schema_version": SCHEMA_VERSION,
     }
+    validate_against_schema(record, "metric_observation.schema.json")
     METRIC_OBSERVATIONS_DIR.mkdir(parents=True, exist_ok=True)
     path = METRIC_OBSERVATIONS_DIR / f"{obs_id}.json"
     path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
