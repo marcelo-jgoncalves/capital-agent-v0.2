@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Experiment",
+  "description": "Canonical experiment record (src/capital_agent.py cmd_new_experiment, src/business_integration.py experiment lifecycle). lifecycle_state is the single source of truth; legacy 'state'/'status' are kept in sync. See EXTERNAL_INTEGRATION.md and experiments/active/EXP-20260813-62C22E.json for the reference shape.",
+  "type": "object",
+  "required": [
+    "id", "created_at", "title", "hypothesis", "budget_brl", "max_loss_brl",
+    "capital_budget_brl", "resource_budget", "non_financial_risks",
+    "success_metric", "kill_condition", "state", "status", "lifecycle_state",
+    "lifecycle_schema_version", "policy_issues", "cash_flows"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "code": {"type": "string"},
+    "created_at": {"type": "string"},
+    "title": {"type": "string"},
+    "hypothesis": {"type": "string"},
+    "budget_brl": {"type": "number"},
+    "max_loss_brl": {"type": "number"},
+    "capital_budget_brl": {"type": "number"},
+    "resource_budget": {
+      "type": "object",
+      "properties": {
+        "operator_time_minutes": {"type": ["number", "null"]},
+        "publications_planned": {"type": ["number", "null"]},
+        "ai_runs_budget": {"type": ["number", "null"]},
+        "note": {"type": "string"}
+      }
+    },
+    "non_financial_risks": {"type": "array", "items": {"type": "string"}},
+    "success_metric": {"type": "string"},
+    "failure_criteria": {"type": "string"},
+    "kill_condition": {"type": "string"},
+    "state": {"type": "string", "enum": ["PLANNED", "READY_FOR_ACTIVATION", "ACTIVE", "PAUSED", "CLOSED"]},
+    "status": {"type": "string"},
+    "lifecycle_state": {"type": "string", "enum": ["PLANNED", "READY_FOR_ACTIVATION", "ACTIVE", "PAUSED", "CLOSED"]},
+    "lifecycle_schema_version": {"type": "string"},
+    "lifecycle_note": {"type": "string"},
+    "policy_issues": {"type": "array", "items": {"type": "string"}},
+    "cash_flows": {"type": "array"},
+    "activated_at": {"type": ["string", "null"]},
+    "activated_by": {"type": ["string", "null"]},
+    "schema_version": {"type": "string"}
+  },
+  "additionalProperties": true
+}

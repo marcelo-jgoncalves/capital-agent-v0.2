@@ -11,6 +11,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -385,7 +386,21 @@ class MetricObservationTests(BusinessIntegrationTestCase):
             period="2026-08", source="platform_export", environment="production",
             coverage="full", data_quality="observed",
         )
-        obs["retrieved_at"] = "2020-01-01T00:00:00Z"  # force pre-activation
+        obs["observed_at"] = "2020-01-01T00:00:00Z"  # force pre-activation
+        filtered = bi.filter_official_evaluation_observations([obs], activation_date="2026-08-13T00:00:00Z")
+        self.assertEqual(filtered, [])
+
+    def test_pre_activation_observation_retrieved_post_activation_is_excluded(self):
+        # Eligibility must be judged on observed_at, not retrieved_at: a
+        # production data point that actually happened before activation but
+        # was only fetched/backfilled afterward must NOT count toward
+        # post-activation evaluation just because retrieved_at is late.
+        obs = bi.create_metric_observation(
+            experiment_id="EXP-001", metric_name="qualified_leads", value=3, unit="count",
+            period="2026-08", source="platform_export", environment="production",
+            coverage="full", data_quality="observed", observed_at="2026-08-01T00:00:00Z",
+        )
+        self.assertGreaterEqual(obs["retrieved_at"], "2026-08-13T00:00:00Z")
         filtered = bi.filter_official_evaluation_observations([obs], activation_date="2026-08-13T00:00:00Z")
         self.assertEqual(filtered, [])
 
@@ -584,6 +599,136 @@ class LedgerCrashSafetyTests(BusinessIntegrationTestCase):
         self.assertEqual(len(matching), 1)
 
 
+class StaleCashEventTransitionTests(BusinessIntegrationTestCase):
+    def test_stale_in_memory_transition_is_rejected(self):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=25.0, source_system="s", source_record_id="stale-tx-1",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        reported = bi.report_external_cash_event(ev, report_source="file_adapter")
+        # `ev` is now a stale in-memory copy (still OBSERVED) while the
+        # persisted record has already advanced to REPORTED. Attempting to
+        # advance from the stale copy must be refused, not silently applied
+        # on top of (or clobbering) the persisted REPORTED state.
+        with self.assertRaises(bi.StaleCashEventStateError):
+            bi.report_external_cash_event(ev, report_source="file_adapter")
+        # Persisted state must be unaffected by the rejected stale attempt.
+        reloaded = bi.load_external_cash_event(ev["id"])
+        self.assertEqual(reloaded["state"], "REPORTED")
+        self.assertEqual(reloaded["state_history"], reported["state_history"])
+
+    def test_fresh_reload_can_proceed_after_stale_rejection(self):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=25.0, source_system="s", source_record_id="stale-tx-2",
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        reported = bi.report_external_cash_event(ev, report_source="file_adapter")
+        with self.assertRaises(bi.StaleCashEventStateError):
+            bi.report_external_cash_event(ev, report_source="file_adapter")
+        # Reloading gives the caller the canonical state, which CAN advance.
+        verified = bi.verify_external_cash_event(
+            bi.load_external_cash_event(ev["id"]), human_confirmed=True, human_statement="ok"
+        )
+        self.assertEqual(verified["state"], "VERIFIED")
+
+
+class LedgerReferenceConflictTests(BusinessIntegrationTestCase):
+    def setUp(self):
+        super().setUp()
+        self._ledger_orig = bi.LEDGER_FILE
+        self._ledger_tmp_dir = Path(tempfile.mkdtemp())
+        bi.LEDGER_FILE = self._ledger_tmp_dir / "ledger.csv"
+        bi.LEDGER_FILE.write_text("timestamp,type,category,amount_brl,description,reference\n", encoding="utf-8")
+
+    def tearDown(self):
+        bi.LEDGER_FILE = self._ledger_orig
+        shutil.rmtree(self._ledger_tmp_dir, ignore_errors=True)
+        super().tearDown()
+
+    def _reconciled_event(self, ref="conflict-1", amount=42.0):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=amount, source_system="s", source_record_id=ref,
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        ev = bi.report_external_cash_event(ev, report_source="file_adapter")
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="x")
+        ev = bi.attribute_external_cash_event(ev)
+        return bi.reconcile_external_cash_event(ev, reconciled_by="human:owner")
+
+    def test_conflicting_duplicate_reference_raises(self):
+        ev = self._reconciled_event(ref="conflict-1", amount=42.0)
+        # A row already exists under this idempotency_key/reference, but with
+        # a DIFFERENT amount -- simulating either corruption or a reference
+        # collision. This must be raised, never silently treated as "already
+        # posted".
+        with bi.LEDGER_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"2026-08-13T00:00:00Z,revenue,external_cash_event,999.00,forged,{ev['idempotency_key']}\n")
+        with self.assertRaises(bi.LedgerReferenceConflictError):
+            bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=lambda *a: None)
+
+    def test_matching_existing_reference_is_still_treated_as_idempotent_no_op(self):
+        ev = self._reconciled_event(ref="conflict-2", amount=15.0)
+        with bi.LEDGER_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"2026-08-13T00:00:00Z,revenue,external_cash_event,15.00,ok,{ev['idempotency_key']}\n")
+        calls = []
+        posted = bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(calls, [])
+        self.assertEqual(posted["state"], "LEDGER_POSTED")
+
+
+class LedgerLockRecoveryTests(BusinessIntegrationTestCase):
+    def setUp(self):
+        super().setUp()
+        self._ledger_orig = bi.LEDGER_FILE
+        self._ledger_tmp_dir = Path(tempfile.mkdtemp())
+        bi.LEDGER_FILE = self._ledger_tmp_dir / "ledger.csv"
+        bi.LEDGER_FILE.write_text("timestamp,type,category,amount_brl,description,reference\n", encoding="utf-8")
+
+    def tearDown(self):
+        bi.LEDGER_FILE = self._ledger_orig
+        shutil.rmtree(self._ledger_tmp_dir, ignore_errors=True)
+        super().tearDown()
+
+    def _reconciled_event(self, ref):
+        ev = bi.observe_external_cash_event(
+            kind="revenue", amount_brl=9.0, source_system="s", source_record_id=ref,
+            observed_at="2026-08-13T00:00:00Z",
+        )
+        ev = bi.report_external_cash_event(ev, report_source="file_adapter")
+        ev = bi.verify_external_cash_event(ev, human_confirmed=True, human_statement="x")
+        ev = bi.attribute_external_cash_event(ev)
+        return bi.reconcile_external_cash_event(ev, reconciled_by="human:owner")
+
+    def test_orphaned_stale_lock_is_recovered(self):
+        ev = self._reconciled_event("lockrec-1")
+        wal_dir = bi.EXTERNAL_CASH_EVENTS_DIR / "_wal"
+        wal_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = wal_dir / (bi.re.sub(r"[^A-Za-z0-9_.-]", "_", ev["idempotency_key"]) + ".lock")
+        # Simulate an orphaned lock: written by a PID that is not running,
+        # and old enough to exceed the stale threshold.
+        lock_path.write_text(json.dumps({"pid": 999999, "created_at": "2000-01-01T00:00:00Z"}), encoding="utf-8")
+        old_time = time.time() - (bi.STALE_LOCK_MAX_AGE_SECONDS + 60)
+        import os as _os
+        _os.utime(lock_path, (old_time, old_time))
+
+        calls = []
+        posted = bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(posted["state"], "LEDGER_POSTED")
+        self.assertEqual(len(calls), 1)
+
+    def test_fresh_lock_is_not_broken(self):
+        ev = self._reconciled_event("lockrec-2")
+        wal_dir = bi.EXTERNAL_CASH_EVENTS_DIR / "_wal"
+        wal_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = wal_dir / (bi.re.sub(r"[^A-Za-z0-9_.-]", "_", ev["idempotency_key"]) + ".lock")
+        # A fresh lock (just created, "owned" by our own live PID) must NOT
+        # be taken over; the caller should time out instead.
+        lock_path.write_text(json.dumps({"pid": bi.os.getpid(), "created_at": bi.now_iso()}), encoding="utf-8")
+        with self.assertRaises(bi.LedgerPostLockError):
+            bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=lambda *a: None, max_lock_wait_s=0.2)
+        lock_path.unlink()
+
+
 class DuplicateAndStaleTests(BusinessIntegrationTestCase):
     def test_duplicate_submission_of_same_external_event_is_a_no_op(self):
         kwargs = dict(kind="revenue", amount_brl=10.0, source_system="s",
@@ -763,6 +908,35 @@ class SchemaValidationTests(BusinessIntegrationTestCase):
         )
         on_disk = json.loads((bi.EXTERNAL_CASH_EVENTS_DIR / f"{ev['id']}.json").read_text(encoding="utf-8"))
         bi.validate_against_schema(on_disk, "external_cash_event.schema.json")  # no raise
+
+    def test_missing_schema_file_fails_loudly_not_silently(self):
+        with self.assertRaises(bi.SchemaValidationError):
+            bi.validate_against_schema({"a": 1}, "no_such_schema_file.schema.json")
+
+    def test_business_observation_validates_against_its_own_schema(self):
+        obs = bi.create_business_observation(
+            observation_type="lead_touch", source_system="platform",
+            source_record_id="schema-obs-1", observed_at="2026-08-13T00:00:00Z",
+        )
+        bi.validate_against_schema(obs, "business_observation.schema.json")  # no raise
+
+    def test_business_signal_pattern_validates_against_its_own_schema(self):
+        sig = bi.create_business_signal_entity(
+            signal_type="recurring_lead_pattern", origin="lead_analysis",
+            evidence_refs=["BSIG-ref-1"], period="2026-08",
+        )
+        bi.validate_against_schema(sig, "business_signal_pattern.schema.json")  # no raise
+
+    def test_business_signal_from_ingest_rejects_additional_properties(self):
+        record = bi.ingest_business_signal(
+            signal_type="lead_created", source_system="platform",
+            source_record_id="rec-schema-extra", observed_at="2026-08-13T00:00:00Z",
+            metric_name="lead_count", metric_value=1, unit="count",
+            data_quality="observed",
+        )
+        record["totally_unexpected_field"] = "x"
+        with self.assertRaises(bi.SchemaValidationError):
+            bi.validate_against_schema(record, "business_signal.schema.json")
 
 
 class MetricTemporalSemanticsTests(BusinessIntegrationTestCase):

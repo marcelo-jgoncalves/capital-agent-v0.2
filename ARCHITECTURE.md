@@ -95,8 +95,16 @@ auditable, and it moves through exactly one of these terminal states:
 
 No component may infer `completed` from the mere existence or approval of a
 request. Only an explicit human confirmation (`capital_agent.py
-confirm-execution`) can transition a request to `completed` and only that
-transition is allowed to touch the ledger. See `execution/README.md`.
+confirm-execution`) can transition a request to `completed`, and for
+execution-derived ledger types (`buy`/`sell`/`capital_out`/`expense`/`fee`/
+`tax`) that `completed` transition is the only legitimate way in. It is not,
+however, the *only* legitimate path onto the ledger overall: externally-
+arriving cash (`revenue`/`refund`/`chargeback`/`other_external_inflow`)
+enters instead through the separate, equally human-gated External Cash Event
+pipeline (`EXTERNAL_INTEGRATION.md`, `src/business_integration.py`), which
+requires an explicit human VERIFIED confirmation before
+`post_external_cash_event_to_ledger` may append a row. See
+`execution/README.md`.
 
 ## System-improvement loop
 
@@ -146,10 +154,18 @@ Vendor-neutral operating contract. Tool-specific discovery/configuration files
 `data/ledger.csv`
 
 Append-only accounting of external capital, expenses, revenues, buys, sells,
-fees, taxes and adjustments. Every row that represents a real financial
-operation must trace back to a `completed` Human Execution Request (or, for
-the initial funding event, to the founding capital-in entry). Analysis,
-recommendations and pending requests never write to it.
+fees, taxes and adjustments. Two legitimate paths write to it: (1) every row
+that represents a real financial execution (a market position change or
+money leaving custody: `buy`/`sell`/`capital_out`/`expense`/`fee`/`tax`) must
+trace back to a `completed` Human Execution Request; (2) every row that
+represents externally-arriving cash (`revenue`/`refund`/`chargeback`/
+`other_external_inflow`) must trace back to an External Cash Event that has
+reached human-VERIFIED and then RECONCILED (`EXTERNAL_INTEGRATION.md`). A
+narrow, explicitly-audited administrative path (`capital_agent.py record
+--admin-confirm --reason ...`) exists only for genuine bookkeeping entries
+outside both of those (e.g. the initial funding `capital_in` event) — it is
+not a general-purpose way to inject cash facts. Analysis, recommendations and
+pending requests never write to it. See `src/capital_agent.py cmd_record`.
 
 ### 3. Policy engine
 

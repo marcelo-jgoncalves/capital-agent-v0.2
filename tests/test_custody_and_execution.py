@@ -131,6 +131,7 @@ def sandbox():
             "HR_EXPIRED_DIR": root / "execution" / "human_requests" / "expired",
             "HR_CANCELLED_DIR": root / "execution" / "human_requests" / "cancelled",
             "STATE_DIR": root / "state",
+            "ADMIN_LEDGER_ACTIONS_DIR": root / "journal" / "admin_ledger_actions",
         }
         with patch.multiple(ca, **patches):
             yield root
@@ -242,15 +243,107 @@ class CustodyInvariantTests(unittest.TestCase):
                     ca.cmd_record(args)
                 self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
 
-    def test_record_still_allows_non_execution_bookkeeping(self):
+    def test_record_expense_requires_completed_execution_id(self):
         with sandbox():
             args = argparse.Namespace(
                 type="expense", category="infrastructure", amount=5.0,
-                description="hosting", reference="TEST-EXP-1",
+                description="hosting", reference="TEST-EXP-1", execution_id=None,
+            )
+            ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                ca.cmd_record(args)
+            self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
+
+    def test_record_expense_with_completed_execution_id_succeeds(self):
+        with sandbox() as root:
+            exec_id = "HER-TEST-1"
+            completed = {
+                "id": exec_id, "action": "PAYMENT", "asset": "hosting",
+                "confirmation": {"executed_total_brl": 5.0},
+            }
+            (root / "execution" / "human_requests" / "completed" / f"{exec_id}.json").write_text(
+                json.dumps(completed), encoding="utf-8"
+            )
+            args = argparse.Namespace(
+                type="expense", category="infrastructure", amount=5.0,
+                description="hosting", reference="TEST-EXP-1", execution_id=exec_id,
             )
             with patch("builtins.print"):
                 ca.cmd_record(args)
             self.assertIn("TEST-EXP-1", ca.LEDGER_FILE.read_text(encoding="utf-8"))
+
+    def test_record_refuses_direct_cash_event_kinds(self):
+        with sandbox():
+            for typ in ("revenue", "refund", "chargeback", "other_external_inflow"):
+                args = argparse.Namespace(
+                    type=typ, category="external", amount=10.0,
+                    description="attempted direct entry", reference=f"TEST-{typ}",
+                )
+                ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    ca.cmd_record(args)
+                self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
+
+    def test_record_admin_types_refused_without_confirm_and_reason(self):
+        with sandbox():
+            for typ in ("capital_in", "adjustment"):
+                args = argparse.Namespace(
+                    type=typ, category="reserve", amount=50.0,
+                    description="attempted", reference=f"TEST-{typ}",
+                    admin_confirm=False, reason=None,
+                )
+                ledger_before = ca.LEDGER_FILE.read_text(encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    ca.cmd_record(args)
+                self.assertEqual(ca.LEDGER_FILE.read_text(encoding="utf-8"), ledger_before)
+
+    def test_record_admin_types_succeed_with_confirm_and_reason_and_leave_audit(self):
+        with sandbox():
+            args = argparse.Namespace(
+                type="capital_in", category="reserve", amount=50.0,
+                description="top-up", reference="TEST-CAPIN-1",
+                admin_confirm=True, reason="human owner wired additional funds, see decision DEC-x",
+            )
+            with patch("builtins.print"):
+                ca.cmd_record(args)
+            self.assertIn("TEST-CAPIN-1", ca.LEDGER_FILE.read_text(encoding="utf-8"))
+            audit_files = list(ca.ADMIN_LEDGER_ACTIONS_DIR.glob("*.json"))
+            self.assertEqual(len(audit_files), 1)
+            audit = json.loads(audit_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(audit["reason"], "human owner wired additional funds, see decision DEC-x")
+
+
+class NewExperimentCanonicalShapeTests(unittest.TestCase):
+    def _args(self, **overrides):
+        defaults = dict(
+            title="Test experiment", budget=100.0, max_loss=50.0,
+            hypothesis="h", success_metric="m", kill_condition="k",
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def test_new_experiment_produces_full_canonical_shape(self):
+        with sandbox() as root:
+            with patch("builtins.print"):
+                ca.cmd_new_experiment(self._args())
+            files = list((root / "experiments" / "active").glob("*.json"))
+            self.assertEqual(len(files), 1)
+            data = json.loads(files[0].read_text(encoding="utf-8"))
+            for field in ("capital_budget_brl", "resource_budget", "non_financial_risks"):
+                self.assertIn(field, data)
+            self.assertEqual(data["capital_budget_brl"], 100.0)
+            self.assertIsInstance(data["resource_budget"], dict)
+            self.assertIsInstance(data["non_financial_risks"], list)
+            ca.bi.validate_against_schema(data, "experiment.schema.json")  # no raise
+
+    def test_zero_capital_experiment_creation_succeeds(self):
+        with sandbox() as root:
+            with patch("builtins.print"):
+                ca.cmd_new_experiment(self._args(budget=0.0, max_loss=0.0))
+            files = list((root / "experiments" / "active").glob("*.json"))
+            data = json.loads(files[0].read_text(encoding="utf-8"))
+            self.assertEqual(data["capital_budget_brl"], 0.0)
+            self.assertEqual(data["policy_issues"], [])  # 0 is valid, not a policy issue
 
 
 class HumanExecutionRequestLifecycleTests(unittest.TestCase):

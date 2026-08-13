@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BusinessObservation",
+  "description": "One raw/individual external data point (src/business_integration.py create_business_observation()). Distinct from BusinessSignal, which is a pattern/claim derived FROM one or more BusinessObservation records. See EXTERNAL_INTEGRATION.md.",
+  "type": "object",
+  "required": ["observation_id", "observation_type", "source_system", "source_record_id", "observed_at", "retrieved_at", "idempotency_key", "schema_version"],
+  "properties": {
+    "observation_id": {"type": "string"},
+    "observation_type": {"type": "string"},
+    "source_system": {"type": "string"},
+    "source_record_id": {"type": "string"},
+    "observed_at": {"type": "string"},
+    "retrieved_at": {"type": "string"},
+    "detail": {"type": ["string", "null"]},
+    "metric_name": {"type": ["string", "null"]},
+    "metric_value": {"type": ["number", "null"]},
+    "unit": {"type": ["string", "null"]},
+    "experiment_id": {"type": ["string", "null"]},
+    "idempotency_key": {"type": "string"},
+    "schema_version": {"type": "string"},
+    "_created": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

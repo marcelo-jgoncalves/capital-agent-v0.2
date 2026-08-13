@@ -98,10 +98,21 @@ def validate_against_schema(record: dict, schema_filename: str) -> None:
     """Validate `record` against schemas/<schema_filename> at runtime. Raises
     SchemaValidationError on any violation. If the jsonschema package is
     unavailable, falls back to a minimal required-fields + enum check so
-    validation is never silently skipped."""
+    validation is never silently skipped. A MISSING schema file is also
+    treated as a validation failure, never a silent skip: every entity type
+    validated through this function has a corresponding schemas/*.json file
+    checked into this repository (see schemas/), so a missing file means a
+    caller passed the wrong filename or a schema was deleted/renamed without
+    updating its call site -- both are bugs that must surface loudly, not be
+    swallowed as "nothing to validate against"."""
     schema = _load_schema(schema_filename)
     if schema is None:
-        return  # schema file missing; nothing to validate against
+        raise SchemaValidationError(
+            f"schema file schemas/{schema_filename} does not exist. Validation "
+            "is never silently skipped in this repository -- either the "
+            "schema file is missing/misnamed, or this call site should not "
+            "be calling validate_against_schema at all."
+        )
     if _HAS_JSONSCHEMA:
         validator = jsonschema.Draft7Validator(schema)
         errors = sorted(validator.iter_errors(record), key=lambda e: e.path)
@@ -418,6 +429,7 @@ def create_business_observation(
         "idempotency_key": idem_key,
         "schema_version": SCHEMA_VERSION,
     }
+    validate_against_schema(record, "business_observation.schema.json")
     record, created = _write_json_idempotent(obs_dir, obs_id, idem_key, record)
     record["_created"] = created
     return record
@@ -484,6 +496,7 @@ def create_business_signal_entity(
         "experiment_id": experiment_id,
         "schema_version": SCHEMA_VERSION,
     }
+    validate_against_schema(record, "business_signal_pattern.schema.json")
     BUSINESS_SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
     path = BUSINESS_SIGNALS_DIR / f"{bsig_id}.json"
     path.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -680,7 +693,41 @@ def find_stale_cash_events(*, grace_period_seconds: float, states: tuple = ("OBS
     return stale
 
 
+class StaleCashEventStateError(CashEventStateError):
+    """Raised when a transition is attempted from an in-memory `event` dict
+    whose `state` no longer matches the canonically persisted state on disk.
+    This is an optimistic-concurrency guard: without it, a caller holding a
+    stale in-memory copy (e.g. fetched before another process/transition
+    advanced the record) could clobber the persisted state backward or
+    silently redo a transition that already happened, corrupting
+    state_history and potentially re-triggering downstream effects (like a
+    second ledger post attempt from a stale RECONCILED copy)."""
+
+
 def _advance_cash_event(event: dict, new_state: str, *, actor: str, note: str = "") -> dict:
+    """Advance `event` to `new_state`. Always reloads the canonical persisted
+    record from disk first and requires event["state"] to match it exactly
+    (optimistic concurrency check) before allowing the transition -- an
+    in-memory copy that has fallen behind the persisted state is refused
+    rather than silently applied on top of stale data."""
+    event_id = event.get("id")
+    if event_id is not None:
+        path = _cash_event_path(event_id)
+        if path.exists():
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            persisted_state = persisted.get("state")
+            expected_state = event.get("state")
+            if persisted_state != expected_state:
+                raise StaleCashEventStateError(
+                    f"stale in-memory state for cash event {event_id!r}: caller "
+                    f"expected state {expected_state!r} but persisted state is "
+                    f"{persisted_state!r}. Reload the event with "
+                    "load_external_cash_event() before retrying the transition."
+                )
+            # Use the canonical persisted record as the base for the update so
+            # any fields the caller's in-memory copy lacked/dropped are not
+            # lost, while still applying the caller-provided transition.
+            event = persisted
     current = event["state"]
     if new_state not in CASH_EVENT_TRANSITIONS.get(current, set()):
         raise CashEventStateError(f"invalid transition {current} -> {new_state}")
@@ -769,6 +816,26 @@ def reconcile_external_cash_event(event: dict, *, reconciled_by: str, note: str 
     return _persist_cash_event(updated)
 
 
+def _find_ledger_row_by_reference(reference: str) -> Optional[dict]:
+    """Return the ledger row (as a dict keyed by header column name) whose
+    `reference` column equals `reference`, or None if no such row exists."""
+    if not LEDGER_FILE.exists():
+        return None
+    with LEDGER_FILE.open(encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header:
+            return None
+        try:
+            ref_idx = header.index("reference")
+        except ValueError:
+            ref_idx = len(header) - 1
+        for row in reader:
+            if len(row) > ref_idx and row[ref_idx] == reference:
+                return dict(zip(header, row))
+    return None
+
+
 def _ledger_reference_posted(reference: str) -> bool:
     """Check the ledger file itself (not just in-memory/local state) for a
     row whose reference column equals `reference`. This is the crash-safety
@@ -776,27 +843,138 @@ def _ledger_reference_posted(reference: str) -> bool:
     but BEFORE persisting the event's LEDGER_POSTED state, this lets a retry
     detect that the line already exists and skip re-appending, instead of
     relying purely on an in-memory guard that a crash would have destroyed."""
-    if not LEDGER_FILE.exists():
-        return False
-    with LEDGER_FILE.open(encoding="utf-8", newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader, None)
-        if not header:
-            return False
-        try:
-            ref_idx = header.index("reference")
-        except ValueError:
-            ref_idx = len(header) - 1
-        for row in reader:
-            if len(row) > ref_idx and row[ref_idx] == reference:
-                return True
-    return False
+    return _find_ledger_row_by_reference(reference) is not None
+
+
+class LedgerReferenceConflictError(CashEventStateError):
+    """Raised when a ledger row already exists under a reference we are
+    about to (re-)post, but its type/amount/category diverge from what this
+    call expects. Mere key presence is not sufficient evidence the row is
+    "the same fact" -- a differing amount/type/category under the same
+    reference means either data corruption or a reference collision, and
+    silently treating that as "already done" would hide a real
+    discrepancy instead of surfacing it."""
+
+
+def _assert_ledger_reference_matches(reference: str, *, expected_type: str, expected_amount: float, expected_category: str) -> None:
+    row = _find_ledger_row_by_reference(reference)
+    if row is None:
+        return
+    mismatches = []
+    if row.get("type") != expected_type:
+        mismatches.append(f"type: existing={row.get('type')!r} expected={expected_type!r}")
+    if row.get("category") != expected_category:
+        mismatches.append(f"category: existing={row.get('category')!r} expected={expected_category!r}")
+    try:
+        existing_amount = round(float(row.get("amount_brl", "nan")), 2)
+    except ValueError:
+        existing_amount = None
+    if existing_amount != round(expected_amount, 2):
+        mismatches.append(f"amount_brl: existing={row.get('amount_brl')!r} expected={expected_amount!r}")
+    if mismatches:
+        raise LedgerReferenceConflictError(
+            f"ledger reference {reference!r} already exists but diverges from "
+            f"the expected posting ({'; '.join(mismatches)}); refusing to treat "
+            "this as an already-completed idempotent post."
+        )
 
 
 class LedgerPostLockError(CashEventStateError):
     """Raised when another process appears to be posting the same
     idempotency key concurrently and does not finish within the wait
     budget."""
+
+
+# Conservative stale-lock threshold: a ledger-post critical section is a
+# handful of local filesystem operations and should never legitimately hold
+# the lock this long. If a lock file is older than this AND (best-effort) its
+# owning PID is no longer running, it is treated as orphaned by a crashed
+# process rather than an in-progress post. PID-liveness checking is
+# best-effort and platform-dependent (os.kill(pid, 0) is not reliable on
+# Windows); when it cannot be determined, age alone is the deciding factor --
+# a deliberate tradeoff toward eventual recoverability over never taking over
+# a lock that might theoretically still be legitimately held.
+STALE_LOCK_MAX_AGE_SECONDS = 300
+
+
+def _pid_is_running(pid: int) -> Optional[bool]:
+    """Best-effort liveness check. Returns True/False when determinable, None
+    when this platform/permission set can't tell (caller should then fall
+    back to the age-only heuristic)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # process exists, we just can't signal it
+    except OSError:
+        return None
+
+
+def _write_lock_owner_info(fd: int) -> None:
+    payload = json.dumps({"pid": os.getpid(), "created_at": now_iso()}).encode("utf-8")
+    os.write(fd, payload)
+
+
+def _lock_is_stale(lock_path: Path) -> bool:
+    try:
+        age_s = time.time() - lock_path.stat().st_mtime
+    except OSError:
+        return False
+    if age_s < STALE_LOCK_MAX_AGE_SECONDS:
+        return False
+    owner_pid = None
+    try:
+        content = json.loads(lock_path.read_text(encoding="utf-8"))
+        owner_pid = content.get("pid")
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    if owner_pid is not None:
+        alive = _pid_is_running(int(owner_pid))
+        if alive is True:
+            return False  # owner process demonstrably still running; not stale
+    return True  # old enough, and owner is dead or undeterminable
+
+
+def _acquire_ledger_post_lock(lock_path: Path, *, idem_key: str, max_lock_wait_s: float) -> bool:
+    """Acquire the O_CREAT|O_EXCL ledger-post lock at `lock_path`, with
+    crash-recoverable stale-lock takeover. A plain finally-block unlink is not
+    crash-recoverable: if the process holding the lock is killed between
+    creating it and the finally block, the lock file is orphaned forever and
+    every future post attempt for that idempotency_key would hang/fail. This
+    adds: (1) owner PID + creation timestamp written into the lock file so a
+    later process can evaluate it, and (2) an atomic rename-based takeover
+    (write our own claim to a temp file, then os.replace() it onto the stale
+    lock path) rather than unlinking-then-recreating, which would reopen a
+    window for two processes to both believe they hold the lock."""
+    start = time.monotonic()
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                _write_lock_owner_info(fd)
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            if _ledger_reference_posted(idem_key):
+                return False  # another process already finished posting it
+            if _lock_is_stale(lock_path):
+                tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{uuid.uuid4().hex[:8]}")
+                tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                try:
+                    _write_lock_owner_info(tfd)
+                finally:
+                    os.close(tfd)
+                os.replace(tmp_path, lock_path)  # atomic takeover
+                return True
+            if time.monotonic() - start > max_lock_wait_s:
+                raise LedgerPostLockError(
+                    f"could not acquire ledger-post lock for {idem_key!r} within "
+                    f"{max_lock_wait_s}s (concurrent post appears to be in progress)"
+                )
+            time.sleep(0.02)
 
 
 def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_lock_wait_s: float = 2.0) -> dict:
@@ -823,27 +1001,15 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
     wal_dir.mkdir(parents=True, exist_ok=True)
     lock_path = wal_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", idem_key) + ".lock")
 
-    acquired = False
-    start = time.monotonic()
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
-            acquired = True
-            break
-        except FileExistsError:
-            if _ledger_reference_posted(idem_key):
-                break  # another process already finished posting it
-            if time.monotonic() - start > max_lock_wait_s:
-                raise LedgerPostLockError(
-                    f"could not acquire ledger-post lock for {idem_key!r} within "
-                    f"{max_lock_wait_s}s (concurrent post appears to be in progress)"
-                )
-            time.sleep(0.02)
+    acquired = _acquire_ledger_post_lock(lock_path, idem_key=idem_key, max_lock_wait_s=max_lock_wait_s)
 
     try:
+        ledger_type = CASH_EVENT_KIND_TO_LEDGER_TYPE[event["kind"]]
+        _assert_ledger_reference_matches(
+            idem_key, expected_type=ledger_type, expected_amount=event["amount_brl"],
+            expected_category="external_cash_event",
+        )
         if not _ledger_reference_posted(idem_key):
-            ledger_type = CASH_EVENT_KIND_TO_LEDGER_TYPE[event["kind"]]
             append_ledger_fn(
                 ledger_type,
                 "external_cash_event",
@@ -1146,16 +1312,22 @@ def create_metric_observation(
 def filter_official_evaluation_observations(observations: list[dict], *, activation_date: Optional[str]) -> list[dict]:
     """Filter a list of metric observations down to the ones eligible for
     official economic evaluation of an experiment: environment=='production'
-    AND (no activation_date requirement, or period/retrieved_at on/after
+    AND (no activation_date requirement, or observed_at on/after
     activation_date). Dev/test/synthetic/smoke/E2E/admin traffic and
-    pre-activation data are excluded, never silently included."""
+    pre-activation data are excluded, never silently included.
+
+    Eligibility is judged on `observed_at` (when the underlying event
+    actually happened), NOT `retrieved_at` (when this system happened to
+    fetch/ingest it). A production data point observed BEFORE activation but
+    retrieved/backfilled AFTER activation must not count toward post-
+    activation evaluation just because it was fetched late."""
     out = []
     for obs in observations:
         if obs.get("environment") != "production":
             continue
         if activation_date:
-            retrieved = obs.get("retrieved_at", "")
-            if retrieved and retrieved < activation_date:
+            observed = obs.get("observed_at", "")
+            if observed and observed < activation_date:
                 continue
         out.append(obs)
     return out
