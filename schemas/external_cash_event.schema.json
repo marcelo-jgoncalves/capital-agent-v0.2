@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExternalCashEvent",
+  "description": "Revenue/refund/etc. that arrives externally rather than being executed by the human. Distinct from Human Execution Request. See src/business_integration.py and EXTERNAL_INTEGRATION.md.",
+  "type": "object",
+  "required": ["id", "kind", "amount_brl", "currency", "source_system", "source_record_id", "idempotency_key", "observed_at", "state", "state_history", "schema_version"],
+  "properties": {
+    "id": {"type": "string"},
+    "kind": {"type": "string", "enum": ["revenue", "refund", "chargeback", "other_external_inflow"]},
+    "amount_brl": {"type": "number", "exclusiveMinimum": 0},
+    "currency": {"type": "string"},
+    "source_system": {"type": "string"},
+    "source_record_id": {"type": "string"},
+    "idempotency_key": {"type": "string"},
+    "observed_at": {"type": "string"},
+    "state": {"type": "string", "enum": ["OBSERVED", "REPORTED", "VERIFIED", "ATTRIBUTED", "RECONCILED", "LEDGER_POSTED"]},
+    "state_history": {"type": "array"},
+    "verification": {"type": ["object", "null"]},
+    "attribution": {"type": ["object", "null"]},
+    "ledger_reference": {"type": ["string", "null"]},
+    "schema_version": {"type": "string"}
+  },
+  "additionalProperties": false
+}

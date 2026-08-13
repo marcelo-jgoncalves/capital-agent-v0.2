@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BusinessSignal",
+  "description": "External business signal ingested via src/business_integration.py ingest_business_signal(). PII fields are never present -- see EXTERNAL_INTEGRATION.md PII firewall.",
+  "type": "object",
+  "required": ["signal_id", "signal_type", "source_system", "source_record_id", "observed_at", "retrieved_at", "metric_name", "data_quality", "schema_version"],
+  "properties": {
+    "signal_id": {"type": "string"},
+    "signal_type": {"type": "string"},
+    "source_system": {"type": "string"},
+    "source_record_id": {"type": "string"},
+    "experiment_id": {"type": ["string", "null"]},
+    "environment": {"type": "string", "enum": ["production", "dev", "test", "staging", "smoke", "e2e", "synthetic", "admin", "unknown"]},
+    "observed_at": {"type": "string"},
+    "retrieved_at": {"type": "string"},
+    "measurement_period": {"type": ["string", "null"]},
+    "metric_name": {"type": "string"},
+    "metric_value": {"type": ["number", "null"]},
+    "unit": {"type": ["string", "null"]},
+    "data_quality": {"type": "string", "enum": ["observed", "aggregated", "manually_reported", "verified", "estimated", "unavailable"]},
+    "coverage": {"type": ["string", "null"]},
+    "attribution_context": {"type": ["string", "null"]},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "provenance": {"type": "string"},
+    "idempotency_key": {"type": "string"},
+    "schema_version": {"type": "string"}
+  },
+  "additionalProperties": true
+}

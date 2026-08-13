@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PublicationReceipt",
+  "description": "Evidence of real publication returned by the platform. Ingestion only -- the Capital Agent never produces this itself. See src/business_integration.py ingest_publication_receipt().",
+  "type": "object",
+  "required": ["publication_id", "publication_request_id", "platform_content_id", "published_at", "environment", "verification_source", "idempotency_key", "schema_version"],
+  "properties": {
+    "publication_id": {"type": "string"},
+    "publication_request_id": {"type": "string"},
+    "platform_content_id": {"type": "string"},
+    "canonical_slug": {"type": ["string", "null"]},
+    "canonical_url": {"type": ["string", "null"]},
+    "published_at": {"type": "string"},
+    "environment": {"type": "string"},
+    "campaign_id": {"type": ["string", "null"]},
+    "verification_source": {"type": "string"},
+    "idempotency_key": {"type": "string"},
+    "schema_version": {"type": "string"}
+  },
+  "additionalProperties": false
+}
