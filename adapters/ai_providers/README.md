@@ -52,6 +52,19 @@ unattended loop) is welcome as a Class A/B system change per
 financial authority; the custody invariant applies identically regardless of
 which adapter is active.
 
+## Second reference implementation: `codex_adapter.py`
+
+Calls the local Codex CLI (`codex exec`) non-interactively — the first
+programmatic (non-manual) provider adapter in this repository. See
+`MULTI_PROVIDER_REASONING.md` for the full architecture,
+`SECOND_OPINION_POLICY.md` for when it is used as a critic,
+`EDITORIAL_RESEARCH_SYSTEM.md` for blind topic discovery, and
+`integrations/codex/README.md` for setup/troubleshooting. It never touches
+Codex's own auth storage, defaults to read-only sandbox, and records every
+run to `state/ai_runs/`. `adapters/ai_providers/task_envelope.py` is the
+provider-neutral request format both `manual_adapter.py`-style dispatch and
+`codex_adapter.py` are meant to converge on over time.
+
 ## Rules
 
 1. An adapter's job is to invoke reasoning, never to execute a financial
