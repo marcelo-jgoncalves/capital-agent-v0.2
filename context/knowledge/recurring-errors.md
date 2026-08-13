@@ -67,3 +67,33 @@ A single incident belongs in a post-mortem, not here.
   require reconciling primary sources that conflict or are commonly
   misread?" — before spending search budget on competitive-crowding checks,
   rather than treating recency/narrowness alone as a good-enough filter.
+
+### System changes merged without a journal/system_changes/ record or index entry
+- First observed: 2026-08-13 (SYS-20260813-CODEX)
+- Occurrences: 3 — `SYS-20260813-CODEX` (Codex CLI provider integration, PR
+  #3), the business-integration hardening pass (PR #5), and the
+  ledger-integrity fix pass (PR #6) were all implemented, tested, and
+  merged with a readiness/audit report written under `journal/reviews/`,
+  but none produced the corresponding `journal/system_changes/SYS-*.md`
+  record or `context/indexes/system-changes.json` entry required by
+  `CONTEXT_MANAGEMENT.md`'s capture -> classify -> persist -> index
+  lifecycle. Discovered during a routine "update context per our rules"
+  request, not by the implementing sessions themselves. Backfilled as
+  `SYS-20260813-BIZHARDEN` and `SYS-20260813-LEDGERINTEGRITY`, and the
+  missing index entries added for all three.
+- Pattern: a session under time/scope pressure to implement a large prompt
+  (adapter, schema, tests, docs) reliably does the readiness-report step
+  (it's usually explicitly requested in the prompt's own closing section)
+  but treats the `journal/system_changes/` record as optional bookkeeping
+  and skips it once the "real" work and tests are done — even though
+  `SYSTEM_EVOLUTION.md` and `CONTEXT_MANAGEMENT.md` both treat it as
+  mandatory for any material architectural change. A readiness report
+  describes whether the change is *ready*; a system-change record is what
+  makes the change *findable and auditable* by a future session reading
+  `context/CURRENT_STATE.md` — they are not substitutes for each other.
+- System-improvement proposal: none yet (a process fix, not a code fix).
+  Any session implementing a Class B/C system change should treat writing
+  the `journal/system_changes/SYS-*.md` record and its
+  `context/indexes/system-changes.json` entry as part of Definition of
+  Done, in the same breath as running the test suite — not as a separate
+  "context management" cleanup pass done later by someone else.

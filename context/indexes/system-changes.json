@@ -94,5 +94,29 @@
     "class": "B",
     "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
     "path": "journal/system_changes/SYS-20260813-PLATFORM.md"
+  },
+  {
+    "id": "SYS-20260813-CODEX",
+    "date": "2026-08-13T17:10:00-03:00",
+    "title": "Codex CLI integrated as second reasoning provider",
+    "class": "B",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260813-CODEX.md"
+  },
+  {
+    "id": "SYS-20260813-BIZHARDEN",
+    "date": "2026-08-13T19:58:00-03:00",
+    "title": "Business integration hardening (crash-safe persistence, chargeback fix, triggers wiring)",
+    "class": "B",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260813-BIZHARDEN.md"
+  },
+  {
+    "id": "SYS-20260813-LEDGERINTEGRITY",
+    "date": "2026-08-13T19:58:38-03:00",
+    "title": "Close ledger bypass in cmd_record, harden cash-event/ledger idempotency, fix experiment/metric schema gaps",
+    "class": "B",
+    "status": "PROPOSED_AUTONOMOUSLY_ALLOWED",
+    "path": "journal/system_changes/SYS-20260813-LEDGERINTEGRITY.md"
   }
 ]
