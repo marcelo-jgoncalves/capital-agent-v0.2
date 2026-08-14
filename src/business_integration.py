@@ -332,20 +332,20 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
         except (OSError, json.JSONDecodeError, KeyError):
             return None
 
-    def _write_claim_content() -> None:
+    def _write_claim_content(claim_record_id: str) -> None:
         index_path.write_text(
-            json.dumps({"record_id": record_id, "idempotency_key": idempotency_key}),
+            json.dumps({"record_id": claim_record_id, "idempotency_key": idempotency_key}),
             encoding="utf-8",
         )
 
-    def _legacy_scan_for_existing() -> Optional[dict]:
+    def _legacy_scan_for_existing() -> Optional[tuple[dict, str]]:
         for existing_path in sorted(dir_path.glob("*.json")):
             try:
                 existing = json.loads(existing_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
             if existing.get("idempotency_key") == idempotency_key:
-                return existing
+                return existing, existing_path.stem
         return None
 
     # Fast path: already claimed (common case -- no lock contention needed
@@ -375,8 +375,10 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
                 claim_raw = ""
             if not claim_raw.strip():
                 # Abandoned/empty claim: take it over rather than wedging
-                # this key shut forever.
-                _write_claim_content()
+                # this key shut forever. We are about to write our own
+                # record (record_id, this call's), so the claim must point
+                # to it.
+                _write_claim_content(record_id)
                 break
             time.sleep(0.005)
         else:
@@ -391,13 +393,32 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
             return existing, False
     else:
         # We only need O_CREAT|O_EXCL for its exclusivity guarantee (whoever
-        # wins this open owns the key); the actual claim content is written
-        # separately below via `_write_claim_content()`'s own `write_text`
-        # call, not through this fd. Caught by ruff (F841, unused `fd`)
-        # while adding lint tooling in the engineering-quality round-3 pass
-        # -- a real file-descriptor leak on every successful call, not just
-        # an unused-variable style nit, since nothing else closed it.
+        # wins this open owns the key); write the actual claim content
+        # separately via `_write_claim_content()` rather than through this
+        # fd, then close it. Caught by ruff (F841, unused `fd`) while
+        # adding lint tooling in the engineering-quality round-3 pass -- a
+        # real file-descriptor leak on every successful call, since nothing
+        # else closed it.
+        #
+        # Fixing the leak surfaced a second, more serious pre-existing bug
+        # found by running the full suite on Linux CI for the first time
+        # (round 3): this winner path never called `_write_claim_content()`
+        # at all before this fix. The claim file existed (empty, just
+        # created by O_CREAT|O_EXCL) but was never populated with
+        # `{record_id, idempotency_key}`. Every concurrent loser hitting
+        # `FileExistsError` below polls, finds the claim still empty
+        # (because the winner never wrote it), concludes it must be
+        # abandoned, and takes it over -- so under real contention (a
+        # `threading.Barrier`-synchronized 8-way race in
+        # WriteJsonIdempotentRaceTests, which happened to not trigger this
+        # reliably on Windows' scheduler but did on Linux CI) multiple
+        # callers could each believe they won and each write their own
+        # data record for the same idempotency_key, exactly the duplicate
+        # this function exists to prevent. Fixed by populating the claim
+        # here, before any other caller can observe the "exists but empty"
+        # state.
         os.close(fd)
+        _write_claim_content(record_id)
 
     # We hold (or just took over) the claim. Before writing a brand-new
     # record, check for a legacy pre-index record with this idempotency_key
@@ -405,8 +426,18 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
     # data written before the claim index existed.
     legacy = _legacy_scan_for_existing()
     if legacy is not None:
-        _write_claim_content()
-        return legacy, False
+        legacy_data, legacy_record_id = legacy
+        # Bug found alongside the winner-path claim fix above (round 3):
+        # this used to write the claim pointing at `record_id` -- this
+        # call's own freshly-generated id, which is never actually created
+        # on this path since we return the legacy record instead -- so the
+        # claim permanently pointed at a nonexistent file. Not a
+        # duplication risk (every future call would just re-run this same
+        # legacy scan and get the right *data* back), but it silently
+        # defeated the claim's fast path forever for any backfilled key.
+        # Fixed: point the claim at the legacy record's own filename stem.
+        _write_claim_content(legacy_record_id)
+        return legacy_data, False
 
     tmp_path = dir_path / f".{record_id}.json.tmp-{uuid.uuid4().hex[:8]}"
     tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
