@@ -3,10 +3,19 @@ line-length = 160
 target-version = "py311"
 
 [tool.ruff.lint]
-# Default select (E, F) plus nothing extra for now -- this is a first pass
-# at introducing lint tooling (engineering-quality round 3), not a full
-# style rewrite. Widen `select` in a future pass once the codebase has
-# settled into whatever ruleset the team actually wants enforced.
+# Explicit select, not ruff's implicit default: relying on "whatever ruff's
+# default ruleset is" broke CI the first time this file was added, because
+# CI installed a newer ruff than was validated locally and its default
+# select set included rules (RUF100 unused-noqa, I001 import-sort) that
+# flagged ~150 pre-existing `# noqa: E402` comments and import orderings
+# never reviewed against those rules. Pinning `select` to exactly what was
+# actually validated (classic E/F pyflakes+pycodestyle core) makes CI
+# behavior independent of which ruff version happens to be installed, and
+# CI additionally pins the ruff version itself (see .github/workflows/ci.yml)
+# so this file's `ignore` list stays meaningful over time. Widen `select`
+# deliberately in a future pass, verifying each new rule's findings first,
+# rather than accepting whatever a version bump's new defaults flag.
+select = ["E4", "E7", "E9", "F"]
 ignore = [
     # E701 (multiple statements on one line via `:`) is deliberately
     # ignored, not unaddressed: this codebase has an established,
