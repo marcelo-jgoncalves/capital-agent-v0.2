@@ -399,7 +399,7 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
                 # re-checking under the lock whether someone else already
                 # recovered it before writing our own claim.
                 recovery_lock_path = index_path.with_suffix(index_path.suffix + ".recovery-lock")
-                acquire_generic_lock(recovery_lock_path, max_lock_wait_s=2.0)
+                recovery_token = acquire_generic_lock(recovery_lock_path, max_lock_wait_s=2.0)
                 try:
                     existing = _read_claimed_record()
                     if existing is not None:
@@ -412,10 +412,7 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
                         _write_claim_content(record_id)
                         recovered = True
                 finally:
-                    try:
-                        recovery_lock_path.unlink()
-                    except OSError:
-                        pass
+                    release_generic_lock(recovery_lock_path, recovery_token)
                 if recovered:
                     break
                 # Someone else recovered it (and, per the checks above,
@@ -436,33 +433,35 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
             if existing is not None:
                 return existing, False
     else:
-        # We only need O_CREAT|O_EXCL for its exclusivity guarantee (whoever
-        # wins this open owns the key); write the actual claim content
-        # separately via `_write_claim_content()` rather than through this
-        # fd, then close it. Caught by ruff (F841, unused `fd`) while
-        # adding lint tooling in the engineering-quality round-3 pass -- a
-        # real file-descriptor leak on every successful call, since nothing
-        # else closed it.
+        # We hold the fresh O_CREAT|O_EXCL fd -- write the claim content
+        # directly into it (a single os.write, before close) rather than
+        # closing it and writing separately via `_write_claim_content()`'s
+        # own temp+replace. Round 3, third Codex finding: a separate
+        # close-then-write-elsewhere still leaves a real (if narrow) window
+        # where the file exists but is empty, observable by a concurrent
+        # `FileExistsError` caller as "looks abandoned" -- the recovery
+        # path is now itself race-free (see the `acquire_generic_lock`
+        # guard above), but it can only be race-free AMONG RECOVERERS; it
+        # cannot protect against the live winner (here) not having
+        # published its content yet, because the winner never participates
+        # in that same recovery-lock protocol. Writing directly into the
+        # exclusive fd we already hold collapses "create" and "publish
+        # content" into the smallest number of syscalls possible in this
+        # design, minimizing (though, per Codex, not provably eliminating
+        # -- a fully closed guarantee needs a lease/fencing-token redesign,
+        # judged out of scope for this pass, see
+        # ENGINEERING_QUALITY_ROUNDS.md round 3) that window.
         #
-        # Fixing the leak surfaced a second, more serious pre-existing bug
-        # found by running the full suite on Linux CI for the first time
-        # (round 3): this winner path never called `_write_claim_content()`
-        # at all before this fix. The claim file existed (empty, just
-        # created by O_CREAT|O_EXCL) but was never populated with
-        # `{record_id, idempotency_key}`. Every concurrent loser hitting
-        # `FileExistsError` below polls, finds the claim still empty
-        # (because the winner never wrote it), concludes it must be
-        # abandoned, and takes it over -- so under real contention (a
-        # `threading.Barrier`-synchronized 8-way race in
-        # WriteJsonIdempotentRaceTests, which happened to not trigger this
-        # reliably on Windows' scheduler but did on Linux CI) multiple
-        # callers could each believe they won and each write their own
-        # data record for the same idempotency_key, exactly the duplicate
-        # this function exists to prevent. Fixed by populating the claim
-        # here, before any other caller can observe the "exists but empty"
-        # state.
-        os.close(fd)
-        _write_claim_content(record_id)
+        # This same fd used to be leaked entirely (ruff F841 caught it
+        # while adding lint tooling this round) -- ourselves not closing it
+        # was the original bug that led to discovering the winner never
+        # published claim content at all, which is what made the
+        # concurrent-duplicate-write bug from WriteJsonIdempotentRaceTests
+        # possible in the first place.
+        try:
+            os.write(fd, json.dumps({"record_id": record_id, "idempotency_key": idempotency_key}).encode("utf-8"))
+        finally:
+            os.close(fd)
 
     # We hold (or just took over) the claim. Before writing a brand-new
     # record, check for a legacy pre-index record with this idempotency_key
@@ -1132,7 +1131,7 @@ def _write_lock_owner_info(fd: int, *, nonce: Optional[str] = None) -> None:
 TAKEOVER_ARBITRATION_MAX_AGE_SECONDS = 5
 
 
-def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
+def _attempt_stale_lock_takeover(lock_path: Path) -> Optional[str]:
     """Take over a stale lock, with real (not merely observed) mutual
     exclusion between racing takeover attempts.
 
@@ -1191,7 +1190,7 @@ def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
         # encode as an automatic timeout; it is now unused by this function
         # and kept only as a documented recovery threshold for that manual
         # step.
-        return False  # another racer is (or very recently was) taking over
+        return None  # another racer is (or very recently was) taking over
 
     try:
         # Re-check staleness now that we hold the arbitration file. Another
@@ -1205,7 +1204,7 @@ def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
         # `acquire_generic_lock` does, but a future or different caller
         # might not).
         if not _lock_is_stale(lock_path):
-            return False
+            return None
         nonce = uuid.uuid4().hex
         tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{nonce[:8]}")
         tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -1225,8 +1224,8 @@ def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
                 tmp_path.unlink()
             except OSError:
                 pass
-            return False
-        return True
+            return None
+        return nonce
     finally:
         try:
             arbitration_path.unlink()
@@ -1254,7 +1253,45 @@ def _lock_is_stale(lock_path: Path) -> bool:
     return True  # old enough, and owner is dead or undeterminable
 
 
-def acquire_generic_lock(lock_path: Path, *, max_lock_wait_s: float) -> bool:
+def release_generic_lock(lock_path: Path, token: Optional[str]) -> None:
+    """Release a lock acquired via `acquire_generic_lock` or
+    `_acquire_ledger_post_lock`, but ONLY if `lock_path` still contains the
+    nonce we were given when we acquired it.
+
+    Round 3, Codex review (a fourth finding in the same lock-hardening
+    chain as the takeover-mutex and ABA-recovery fixes above): every caller
+    of these lock functions used to release with a bare, unconditional
+    `lock_path.unlink()`. That is safe in the overwhelmingly common case
+    (we still own the lock), but not in the rare one: if this process was
+    itself delayed long enough (GC pause, OS scheduler stall, VM
+    suspend/resume -- not necessarily a crash) for another process to judge
+    our lock stale and take it over, then when we finally resume and reach
+    our own `finally` block, an unconditional unlink deletes the NEW
+    owner's lock file, not our own -- silently breaking that owner's
+    mutual exclusion. Verifying the nonce before unlinking closes this:
+    if the content on disk is no longer ours, we leave it alone (its
+    current owner is responsible for its own release; a leftover lock
+    from OUR abandoned session, if we really did crash, self-heals via
+    `_lock_is_stale` on the next acquire attempt exactly as before).
+    `token is None` is accepted as a no-op for callers whose acquire
+    short-circuited without ever taking the lock (e.g.
+    `_acquire_ledger_post_lock` returning None when another process
+    already finished the posting)."""
+    if token is None:
+        return
+    try:
+        content = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return  # can't prove it's still ours; do not touch it
+    if content.get("nonce") != token:
+        return  # no longer ours -- another process took it over
+    try:
+        lock_path.unlink()
+    except OSError:
+        pass
+
+
+def acquire_generic_lock(lock_path: Path, *, max_lock_wait_s: float) -> str:
     """Generic crash-recoverable O_CREAT|O_EXCL mutual-exclusion lock, for
     callers (e.g. capital_agent.cmd_record_reserve_asset) that need to
     serialize a read-check-write critical section but have no
@@ -1263,20 +1300,25 @@ def acquire_generic_lock(lock_path: Path, *, max_lock_wait_s: float) -> bool:
     takeover strategy as `_acquire_ledger_post_lock` (owner PID + timestamp,
     atomic rename-based takeover), factored out here so both call sites
     share one crash-recovery implementation instead of drifting apart.
-    Caller is responsible for unlinking `lock_path` when done (best-effort;
-    a leftover lock self-heals via staleness detection on the next call)."""
+
+    Returns an opaque ownership token (a nonce). Callers MUST release via
+    `release_generic_lock(lock_path, token)`, not a bare `.unlink()` -- see
+    that function's docstring for why."""
     start = time.monotonic()
     while True:
         try:
+            nonce = uuid.uuid4().hex
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             try:
-                _write_lock_owner_info(fd)
+                _write_lock_owner_info(fd, nonce=nonce)
             finally:
                 os.close(fd)
-            return True
+            return nonce
         except FileExistsError:
-            if _lock_is_stale(lock_path) and _attempt_stale_lock_takeover(lock_path):
-                return True
+            if _lock_is_stale(lock_path):
+                token = _attempt_stale_lock_takeover(lock_path)
+                if token is not None:
+                    return token
             if time.monotonic() - start > max_lock_wait_s:
                 raise LedgerPostLockError(
                     f"could not acquire lock {lock_path} within {max_lock_wait_s}s "
@@ -1285,7 +1327,7 @@ def acquire_generic_lock(lock_path: Path, *, max_lock_wait_s: float) -> bool:
             time.sleep(0.02)
 
 
-def _acquire_ledger_post_lock(lock_path: Path, *, idem_key: str, max_lock_wait_s: float) -> bool:
+def _acquire_ledger_post_lock(lock_path: Path, *, idem_key: str, max_lock_wait_s: float) -> Optional[str]:
     """Acquire the O_CREAT|O_EXCL ledger-post lock at `lock_path`, with
     crash-recoverable stale-lock takeover. A plain finally-block unlink is not
     crash-recoverable: if the process holding the lock is killed between
@@ -1295,21 +1337,30 @@ def _acquire_ledger_post_lock(lock_path: Path, *, idem_key: str, max_lock_wait_s
     later process can evaluate it, and (2) an atomic rename-based takeover
     (write our own claim to a temp file, then os.replace() it onto the stale
     lock path) rather than unlinking-then-recreating, which would reopen a
-    window for two processes to both believe they hold the lock."""
+    window for two processes to both believe they hold the lock.
+
+    Returns an opaque ownership token (a nonce) on success, or None if
+    another process is found to have already finished posting this
+    idempotency_key (nothing was locked; caller should not call
+    `release_generic_lock`, though passing token=None there is also a
+    documented no-op)."""
     start = time.monotonic()
     while True:
         try:
+            nonce = uuid.uuid4().hex
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             try:
-                _write_lock_owner_info(fd)
+                _write_lock_owner_info(fd, nonce=nonce)
             finally:
                 os.close(fd)
-            return True
+            return nonce
         except FileExistsError:
             if _ledger_reference_posted(idem_key):
-                return False  # another process already finished posting it
-            if _lock_is_stale(lock_path) and _attempt_stale_lock_takeover(lock_path):
-                return True
+                return None  # another process already finished posting it
+            if _lock_is_stale(lock_path):
+                token = _attempt_stale_lock_takeover(lock_path)
+                if token is not None:
+                    return token
             if time.monotonic() - start > max_lock_wait_s:
                 raise LedgerPostLockError(
                     f"could not acquire ledger-post lock for {idem_key!r} within "
@@ -1373,7 +1424,7 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
     wal_dir.mkdir(parents=True, exist_ok=True)
     lock_path = wal_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", idem_key) + ".lock")
 
-    acquired = _acquire_ledger_post_lock(lock_path, idem_key=idem_key, max_lock_wait_s=max_lock_wait_s)
+    lock_token = _acquire_ledger_post_lock(lock_path, idem_key=idem_key, max_lock_wait_s=max_lock_wait_s)
 
     try:
         # Re-reload under the lock: another process may have posted (or
@@ -1401,11 +1452,7 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
         updated["ledger_reference"] = idem_key
         return _persist_cash_event(updated)
     finally:
-        if acquired:
-            try:
-                lock_path.unlink()
-            except OSError:
-                pass
+        release_generic_lock(lock_path, lock_token)
 
 
 # ---------------------------------------------------------------------------

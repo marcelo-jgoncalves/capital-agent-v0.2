@@ -896,8 +896,10 @@ class GenericLockStaleTakeoverMutexTests(BusinessIntegrationTestCase):
         # filesystem level), but the nonce read-back must show that exactly
         # one of them is the one whose write is still on disk afterward --
         # this is the actual mutual-exclusion property, not the replace
-        # call succeeding.
-        self.assertEqual(results.count(True), 1)
+        # call succeeding. Round 3: the function now returns the winning
+        # token (str) instead of True, so a winner is any non-None result.
+        winners = [r for r in results if r is not None]
+        self.assertEqual(len(winners), 1)
 
     def test_acquire_generic_lock_grants_exactly_one_winner_under_stale_race(self):
         lock_path = Path(tempfile.mkdtemp()) / "mutex2.lock"
@@ -946,6 +948,39 @@ class GenericLockStaleTakeoverMutexTests(BusinessIntegrationTestCase):
         self.assertFalse(result)
         self.assertTrue(arbitration_path.exists())
         self.assertEqual(arbitration_path.read_text(encoding="utf-8"), "owned by someone else")
+
+    def test_release_generic_lock_does_not_delete_a_lock_it_no_longer_owns(self):
+        # Fourth finding in this round's lock-hardening chain (Codex
+        # review): release_generic_lock/acquire_generic_lock used to be
+        # released with a bare unconditional unlink(). If the original
+        # holder was merely delayed (not crashed) past the stale threshold,
+        # another process could legitimately take over the lock, and the
+        # original holder's eventual unlink() would then delete the NEW
+        # owner's lock file instead of its own -- breaking that owner's
+        # mutual exclusion. Simulates exactly that: acquire, then simulate
+        # a takeover behind our back (replace the lock content with a
+        # different nonce, as a genuine stale-takeover would), then release
+        # with our stale token and confirm the new owner's lock survives.
+        lock_path = Path(tempfile.mkdtemp()) / "release.lock"
+        our_token = bi.acquire_generic_lock(lock_path, max_lock_wait_s=1.0)
+        self.assertIsNotNone(our_token)
+
+        # Simulate another process taking the lock over while we were
+        # delayed: overwrite the lock content with a different nonce.
+        other_token = "someone-elses-token"
+        lock_path.write_text(json.dumps({"pid": 999999, "created_at": bi.now_iso(), "nonce": other_token}), encoding="utf-8")
+
+        bi.release_generic_lock(lock_path, our_token)
+
+        self.assertTrue(lock_path.exists())
+        content = json.loads(lock_path.read_text(encoding="utf-8"))
+        self.assertEqual(content["nonce"], other_token)
+
+    def test_release_generic_lock_deletes_a_lock_it_still_owns(self):
+        lock_path = Path(tempfile.mkdtemp()) / "release2.lock"
+        token = bi.acquire_generic_lock(lock_path, max_lock_wait_s=1.0)
+        bi.release_generic_lock(lock_path, token)
+        self.assertFalse(lock_path.exists())
 
 
 class WriteJsonIdempotentRaceTests(BusinessIntegrationTestCase):

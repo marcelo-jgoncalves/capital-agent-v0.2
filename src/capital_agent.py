@@ -843,7 +843,7 @@ def cmd_confirm_execution(args):
     lock_dir = HUMAN_REQUESTS_DIR / "_wal"
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / "confirm-execution-global.lock"
-    bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
+    lock_token = bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
     try:
         completed_path = HR_COMPLETED_DIR / f"{args.id}.json"
         if completed_path.exists():
@@ -913,10 +913,7 @@ def cmd_confirm_execution(args):
         })
         print(json.dumps({"id": data["id"], "status": "completed", "verified_cash_brl": cash_balance()}, indent=2))
     finally:
-        try:
-            lock_path.unlink()
-        except OSError:
-            pass
+        bi.release_generic_lock(lock_path, lock_token)
 
 
 def cmd_cancel_execution(args):
@@ -1020,7 +1017,7 @@ def cmd_record_reserve_asset(args):
     # duration of the read-check-write, plus temp-file + os.replace() for
     # the write itself.
     lock_path = RESERVE_ASSETS_FILE.with_suffix(RESERVE_ASSETS_FILE.suffix + ".lock")
-    acquired = bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
+    lock_token = bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
     try:
         # Reload from disk each time (never trust an in-memory copy), now
         # under the lock so no concurrent writer can interleave.
@@ -1065,11 +1062,7 @@ def cmd_record_reserve_asset(args):
         os.replace(tmp_path, RESERVE_ASSETS_FILE)
         print(json.dumps({"recorded": entry, "idempotent": False, "verified_equity_floor_brl": current_equity_floor()}, indent=2))
     finally:
-        if acquired:
-            try:
-                lock_path.unlink()
-            except OSError:
-                pass
+        bi.release_generic_lock(lock_path, lock_token)
 
 
 def _list_json(dir_path: Path) -> list[dict]:
