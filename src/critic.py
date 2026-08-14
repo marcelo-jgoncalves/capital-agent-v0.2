@@ -19,7 +19,6 @@ sys.path.insert(0, str(ROOT))
 
 from adapters.ai_providers.task_envelope import TaskEnvelope  # noqa: E402
 from adapters.ai_providers.codex_adapter import CodexAdapter  # noqa: E402
-from adapters.ai_providers import codex_cli  # noqa: E402
 
 DISAGREEMENTS_DIR = ROOT / "state" / "critic" / "disagreements"
 CRITIC_RUNS_DIR = ROOT / "state" / "critic" / "runs"

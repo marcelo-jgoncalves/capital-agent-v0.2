@@ -795,7 +795,6 @@ class ReserveAssetTests(unittest.TestCase):
 
     def test_repeated_equivalent_booking_is_idempotent_no_op(self):
         with sandbox():
-            equity_before_booking = None
             request_id = self._confirm_a_buy(quantity=1.0, price=20.0)
             with patch("builtins.print"):
                 ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))

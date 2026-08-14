@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lint/type-check tools
+        run: pip install ruff mypy
+      - name: Lint (ruff)
+        run: ruff check src/ tests/
+      - name: Type-check (mypy, src/ only -- see pyproject.toml note on adapters/)
+        run: mypy src/
+      - name: Run tests
+        run: python -m unittest discover -s tests

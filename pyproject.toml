@@ -1,0 +1,46 @@
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+
+[tool.ruff.lint]
+# Default select (E, F) plus nothing extra for now -- this is a first pass
+# at introducing lint tooling (engineering-quality round 3), not a full
+# style rewrite. Widen `select` in a future pass once the codebase has
+# settled into whatever ruleset the team actually wants enforced.
+ignore = [
+    # E701 (multiple statements on one line via `:`) is deliberately
+    # ignored, not unaddressed: this codebase has an established,
+    # consistent convention of dense single-line guard clauses (e.g.
+    # `if X: reasons.append(...)` repeated across classify_critical() and
+    # similar functions). Reformatting ~9 working, reviewed lines into
+    # multi-line form purely for lint compliance was judged not worth the
+    # diff noise/review burden versus configuring the linter to match an
+    # existing, intentional style. Revisit only if the team decides to
+    # standardize away from this pattern for a real readability reason.
+    "E701",
+]
+
+[tool.mypy]
+# Incremental adoption, not full strictness: this codebase has partial type
+# hints and predates mypy in its toolchain (added in engineering-quality
+# round 3). `ignore_missing_imports` and permissive defaults keep CI green
+# on day one; tighten (disallow_untyped_defs, etc.) incrementally as
+# functions get annotated, rather than demanding full coverage up front,
+# which is the same "smallest sufficient change, verified, then build on
+# it" philosophy the rest of this project's engineering process follows
+# (see SYSTEM_EVOLUTION.md).
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# Note: `adapters/` is intentionally NOT included in the CI mypy target
+# (`mypy src/`). Its modules use sys.path manipulation for imports rather
+# than being a proper package, which makes mypy report a spurious
+# "Source file found twice under different module names" error when
+# checked alongside src/ in the same run. Fixing that needs a real package
+# restructure (adding __init__.py / --explicit-package-bases), which is a
+# larger change than this lint-tooling pass -- filed as a follow-up, not
+# blocking this round's CI setup. `src/` (the financially-critical code)
+# is fully covered.

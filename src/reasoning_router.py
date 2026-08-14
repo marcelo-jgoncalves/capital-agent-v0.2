@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from adapters.ai_providers.task_envelope import TaskEnvelope, TaskEnvelopeError  # noqa: E402
+from adapters.ai_providers.task_envelope import TaskEnvelope  # noqa: E402
 from adapters.ai_providers.codex_adapter import CodexAdapter  # noqa: E402
 
 # Section 34: which task types require a second provider critic *when

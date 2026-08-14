@@ -355,9 +355,8 @@ class SchedulerAtomicityTests(SchedulerTriggerTestCase):
         # distinct wall-clock-suffixed key.
         pending = []
         fired = {"trigger_id": "attribution_pending_too_long", "detail": "2 event(s) stuck: ['a', 'b']"}
-        trigger_def = {"requires_ai_reasoning": True}
         for _ in range(3):
-            job = sch.enqueue(
+            sch.enqueue(
                 pending, job_key=f"trigger:{fired['trigger_id']}:{fired['detail']}",
                 kind="trigger", requires_ai_reasoning=True, context_hint="x",
             )
@@ -365,7 +364,6 @@ class SchedulerAtomicityTests(SchedulerTriggerTestCase):
         self.assertEqual(len(matching), 1)
 
 
-import argparse  # noqa: E402
 import unittest.mock  # noqa: E402
 
 
