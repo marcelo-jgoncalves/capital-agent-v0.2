@@ -14,6 +14,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install runtime dependencies
+        # Without this, business_integration.py's validate_against_schema
+        # silently falls back to a degraded stdlib-only validator (no
+        # additionalProperties/pattern/format checks) instead of erroring,
+        # which is deliberate production behavior (never hard-fail an
+        # import) but meant CI's first real run exercised different,
+        # weaker validation logic than local runs -- and a real schema
+        # test failed here that never failed locally, for that reason.
+        run: pip install -r requirements.txt
       - name: Install lint/type-check tools
         # Pinned to the versions this config was actually validated
         # against locally. An unpinned `pip install ruff mypy` broke CI

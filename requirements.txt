@@ -1,0 +1,9 @@
+# Runtime dependencies. Kept intentionally minimal -- this project prefers
+# stdlib where practical (see AI_OPERATING_MANUAL.md's engineering
+# philosophy). jsonschema is used for full JSON Schema validation
+# (business_integration.py validate_against_schema); its absence is
+# handled gracefully by a degraded stdlib-only fallback (required fields +
+# enums, no additionalProperties/pattern/format checks) rather than a hard
+# import error, but CI and any real deployment should install it so the
+# full validation path is what's actually exercised and tested.
+jsonschema>=4.0
