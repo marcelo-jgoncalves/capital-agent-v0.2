@@ -809,18 +809,29 @@ def _find_pending_request(request_id: str) -> Path:
 def cmd_confirm_execution(args):
     # ADR-003 minimum viable fix: serialize the whole read-append-move
     # critical section per HER id, and treat an existing completed/<id>.json
-    # as proof the financial posting already happened. This closes the two
-    # concrete failure modes an independent (Codex) review found:
-    # crash-retry duplication (process dies after the ledger append but
-    # before the HER is moved to completed/, and a retry re-appends) and
-    # concurrent-confirmation duplication (two confirm-execution calls for
-    # the same id both pass _find_pending_request before either moves the
-    # file). It does NOT make the ledger-append + file-move itself a single
-    # durable transaction (see ADR-003 item 3, deliberately deferred); a
-    # crash strictly between the ledger append and the completed/ write is
-    # still possible in principle, but the lock plus the completed/ check
-    # below mean no retry or concurrent caller can ever produce a *second*
-    # ledger line for the same HER id.
+    # as proof the financial posting already happened. This closes two of
+    # the failure modes an independent (Codex) review found:
+    # - concurrent-confirmation duplication (two confirm-execution calls for
+    #   the same id both pass _find_pending_request before either moves the
+    #   file) is fully closed by the per-id lock below.
+    # - crash-retry duplication is closed ONLY for retries that happen
+    #   after completed/<id>.json was actually written. A crash strictly
+    #   between the ledger append and the completed/ write leaves a ledger
+    #   line with no completed/ record; a retry in that specific window
+    #   will still find nothing at completed_path and re-append. This
+    #   narrower gap is real, understood, and intentionally not closed here
+    #   -- see backlog/ADR-003-confirm-execution-atomicity.md item 3 for why
+    #   (closing it fully needs a combined-durable-record redesign, not a
+    #   same-session patch to the core money-entry path). Do not read this
+    #   comment as claiming "no retry can ever produce a second ledger
+    #   line" -- that is true for the concurrency case, not the crash case.
+    #
+    # Also note: the lock here is scoped to a single HER id. Two DIFFERENT
+    # HER ids can still race each other's cash_balance() check and
+    # append_ledger() call (there is no lock across the whole ledger), so
+    # two individually-affordable executions confirmed at the same instant
+    # could jointly overspend verified cash. Tracked as a follow-up, not
+    # fixed in this pass; see ENGINEERING_QUALITY_ROUNDS.md round 1.
     HR_COMPLETED_DIR.mkdir(parents=True, exist_ok=True)
     lock_dir = HUMAN_REQUESTS_DIR / "_wal"
     lock_dir.mkdir(parents=True, exist_ok=True)
@@ -840,8 +851,20 @@ def cmd_confirm_execution(args):
         path = _find_pending_request(args.id)
         data = json.loads(path.read_text(encoding="utf-8"))
 
-        executed_total = round(args.executed_quantity * args.executed_price + args.fees, 2)
+        gross = args.executed_quantity * args.executed_price
         action = data["action"]
+        if action == "SELL":
+            # Fees reduce what you actually receive from a sale -- net
+            # proceeds, not gross plus fees on top. (Found by an
+            # independent Codex review: the previous `gross + fees` formula
+            # was correct for BUY, where fees are an added cost, but wrong
+            # for SELL, where it inflated recorded cash inflow by 2x the
+            # fee instead of reducing it once.)
+            executed_total = round(gross - args.fees, 2)
+            if executed_total < 0:
+                raise SystemExit("refused: reported fees exceed gross sale proceeds; investigate before recording")
+        else:
+            executed_total = round(gross + args.fees, 2)
         if action == "BUY":
             ledger_type = "buy"
         elif action == "SELL":
