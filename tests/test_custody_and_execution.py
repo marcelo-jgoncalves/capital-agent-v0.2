@@ -538,6 +538,22 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             expected_net = round(gross - 0.5, 2)
             self.assertAlmostEqual(ca.cash_balance(), cash_before + expected_net, places=2)
 
+    def test_confirm_execution_sell_refuses_sub_cent_fee_overage_before_rounding(self):
+        # Codex review finding: fee > gross must be checked BEFORE rounding
+        # to 2 decimal places. Checking after rounding could turn a fee that
+        # exceeds gross by less than half a cent into "-0.0", which passes
+        # a `< 0` check even though the sale is not actually break-even.
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args(action="SELL"))
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=1.0, executed_price=1.0, fees=1.001,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            )
+            with self.assertRaises(SystemExit):
+                ca.cmd_confirm_execution(confirm_args)
+
     def test_confirm_execution_sell_refuses_when_fees_exceed_gross_proceeds(self):
         with sandbox():
             with patch("builtins.print"):

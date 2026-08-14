@@ -925,6 +925,29 @@ class GenericLockStaleTakeoverMutexTests(BusinessIntegrationTestCase):
         # it held the lock, which is what the fixed nonce check prevents.
         self.assertGreaterEqual(len(acquired), 1)
 
+    def test_foreign_arbitration_file_is_never_taken_over_or_deleted(self):
+        # Codex review finding: an earlier version aged out and deleted a
+        # stale-looking arbitration file, which is an ABA race (the file's
+        # original owner can still be alive and mid-critical-section, just
+        # delayed past the age threshold; a third party recreating and then
+        # deleting it out from under the true owner breaks exclusivity).
+        # The fix: never touch another process's arbitration file, at any
+        # age -- only its own creator may remove it.
+        lock_path = Path(tempfile.mkdtemp()) / "aba.lock"
+        self._make_stale_lock(lock_path)
+        arbitration_path = lock_path.with_suffix(lock_path.suffix + ".takeover-arbitration")
+        arbitration_path.parent.mkdir(parents=True, exist_ok=True)
+        arbitration_path.write_text("owned by someone else", encoding="utf-8")
+        old_time = time.time() - (bi.TAKEOVER_ARBITRATION_MAX_AGE_SECONDS + 60)
+        import os as _os
+        _os.utime(arbitration_path, (old_time, old_time))
+
+        result = bi._attempt_stale_lock_takeover(lock_path)
+
+        self.assertFalse(result)
+        self.assertTrue(arbitration_path.exists())
+        self.assertEqual(arbitration_path.read_text(encoding="utf-8"), "owned by someone else")
+
 
 class WriteJsonIdempotentRaceTests(BusinessIntegrationTestCase):
     """P2 (prompt-hardening-final-capital-agent-v0.2.md section 9):
