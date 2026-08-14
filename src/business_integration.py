@@ -287,28 +287,67 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
     every loser (this call, or a retry) reads back the winner's record_id
     from the claim file and returns the winner's persisted record instead of
     writing anything -- so retry/concurrency can never produce a duplicate.
-    No lock file is left behind mid-flight without content: the claim file
-    is created with its final content in the same open() call, so a crash
-    right after the atomic create still leaves a valid, readable claim
-    (never a bare empty lock someone else must interpret)."""
+    Post-review hardening (2026-08-13 Codex review of this PR): the first
+    version of this fix had three real gaps, now closed:
+    - the claim filename was a lossy char-substitution of the raw key
+      (`a/b` and `a?b` collided), and a claim's content was never checked
+      against the requested key -- a hash collision or corrupted claim could
+      silently hand back the wrong record. Fixed by always hashing the full
+      key (sha256, no collision-prone substitution) and validating
+      `claim["idempotency_key"] == idempotency_key` on every read.
+    - a crash between `os.open(O_CREAT|O_EXCL)` and the following
+      `os.write` left an empty, permanently-unclaimable claim file (every
+      future caller for that key would poll for 1s and then hard-fail
+      forever). Fixed: an empty/corrupt claim is now treated as an
+      abandoned claim and taken over (best-effort, single extra open) rather
+      than wedging the key shut permanently.
+    - records created by the pre-index version of this function (a plain
+      `<record_id>.json` with an `idempotency_key` field, no claim file)
+      were invisible to the new claim-only lookup, so replaying an old
+      key would create a second record. Fixed: on a claim-miss, fall back
+      to scanning `dir_path` once for a legacy record with a matching
+      `idempotency_key` and backfill a claim for it before proceeding.
+    """
     dir_path.mkdir(parents=True, exist_ok=True)
     index_dir = dir_path / "_idempotency_index"
     index_dir.mkdir(parents=True, exist_ok=True)
-    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", idempotency_key) or "empty"
-    if len(safe_key) > 150:
-        safe_key = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
-    index_path = index_dir / f"{safe_key}.json"
+    key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    index_path = index_dir / f"{key_hash}.json"
 
-    def _read_claimed_record() -> Optional[dict]:
+    def _read_claim() -> Optional[dict]:
         try:
             claim = json.loads(index_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            return None
+        if claim.get("idempotency_key") != idempotency_key:
+            return None
+        return claim
+
+    def _read_claimed_record() -> Optional[dict]:
+        claim = _read_claim()
+        if claim is None:
             return None
         claimed_path = dir_path / f"{claim['record_id']}.json"
         try:
             return json.loads(claimed_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, KeyError):
             return None
+
+    def _write_claim_content() -> None:
+        index_path.write_text(
+            json.dumps({"record_id": record_id, "idempotency_key": idempotency_key}),
+            encoding="utf-8",
+        )
+
+    def _legacy_scan_for_existing() -> Optional[dict]:
+        for existing_path in sorted(dir_path.glob("*.json")):
+            try:
+                existing = json.loads(existing_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if existing.get("idempotency_key") == idempotency_key:
+                return existing
+        return None
 
     # Fast path: already claimed (common case -- no lock contention needed
     # to observe a fact that's already settled).
@@ -319,26 +358,52 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
     try:
         fd = os.open(str(index_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        # Lost the race to claim this idempotency_key between the fast-path
-        # read and here. Poll briefly for the winner's record to appear
-        # (the winner writes the real record right after winning the claim).
+        # Someone else's claim file exists for this key. It may be: (a) a
+        # winner's valid, populated claim not yet visible to our first read
+        # (race) -- poll briefly; or (b) an abandoned claim left by a
+        # process that crashed between os.open and os.write -- detect via
+        # the claim being empty/unreadable and take it over.
         for _ in range(200):
             existing = _read_claimed_record()
             if existing is not None:
                 return existing, False
+            claim = _read_claim()
+            if claim is None and not index_path.exists():
+                break  # claim vanished (shouldn't happen); fall through to retry create
+            try:
+                claim_raw = index_path.read_text(encoding="utf-8")
+            except OSError:
+                claim_raw = ""
+            if not claim_raw.strip():
+                # Abandoned/empty claim: take it over rather than wedging
+                # this key shut forever.
+                _write_claim_content()
+                break
             time.sleep(0.005)
-        raise RuntimeError(
-            f"idempotency race unresolved for key {idempotency_key!r}: claim file exists "
-            "but its record never became readable"
-        )
-    else:
-        try:
-            os.write(fd, json.dumps({"record_id": record_id, "idempotency_key": idempotency_key}).encode("utf-8"))
-        finally:
-            os.close(fd)
-        path = dir_path / f"{record_id}.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return data, True
+        else:
+            raise RuntimeError(
+                f"idempotency race unresolved for key {idempotency_key!r}: claim file exists "
+                "but its record never became readable"
+            )
+        # Fell through the loop (broke out): re-check once more, then
+        # proceed to write as if we own the claim now.
+        existing = _read_claimed_record()
+        if existing is not None:
+            return existing, False
+
+    # We hold (or just took over) the claim. Before writing a brand-new
+    # record, check for a legacy pre-index record with this idempotency_key
+    # so upgrading to this function's claim-based lookup never duplicates
+    # data written before the claim index existed.
+    legacy = _legacy_scan_for_existing()
+    if legacy is not None:
+        _write_claim_content()
+        return legacy, False
+
+    tmp_path = dir_path / f".{record_id}.json.tmp-{uuid.uuid4().hex[:8]}"
+    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp_path, dir_path / f"{record_id}.json")
+    return data, True
 
 
 class BusinessSignalError(ValueError):
@@ -992,6 +1057,44 @@ def _lock_is_stale(lock_path: Path) -> bool:
     return True  # old enough, and owner is dead or undeterminable
 
 
+def acquire_generic_lock(lock_path: Path, *, max_lock_wait_s: float) -> bool:
+    """Generic crash-recoverable O_CREAT|O_EXCL mutual-exclusion lock, for
+    callers (e.g. capital_agent.cmd_record_reserve_asset) that need to
+    serialize a read-check-write critical section but have no
+    idempotency-key-specific "already done" check like
+    `_ledger_reference_posted` to short-circuit on. Same stale-lock
+    takeover strategy as `_acquire_ledger_post_lock` (owner PID + timestamp,
+    atomic rename-based takeover), factored out here so both call sites
+    share one crash-recovery implementation instead of drifting apart.
+    Caller is responsible for unlinking `lock_path` when done (best-effort;
+    a leftover lock self-heals via staleness detection on the next call)."""
+    start = time.monotonic()
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                _write_lock_owner_info(fd)
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            if _lock_is_stale(lock_path):
+                tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{uuid.uuid4().hex[:8]}")
+                tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                try:
+                    _write_lock_owner_info(tfd)
+                finally:
+                    os.close(tfd)
+                os.replace(tmp_path, lock_path)  # atomic takeover
+                return True
+            if time.monotonic() - start > max_lock_wait_s:
+                raise LedgerPostLockError(
+                    f"could not acquire lock {lock_path} within {max_lock_wait_s}s "
+                    "(concurrent writer appears to be in progress)"
+                )
+            time.sleep(0.02)
+
+
 def _acquire_ledger_post_lock(lock_path: Path, *, idem_key: str, max_lock_wait_s: float) -> bool:
     """Acquire the O_CREAT|O_EXCL ledger-post lock at `lock_path`, with
     crash-recoverable stale-lock takeover. A plain finally-block unlink is not
@@ -1060,6 +1163,17 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
     event_id = event["id"]
     canonical = load_external_cash_event(event_id)
 
+    # Post-review fix (2026-08-13 Codex review of this PR): LEDGER_POSTED is
+    # checked BEFORE the expected_state precondition, not after. A caller
+    # that posted successfully, then lost the response and retried with its
+    # last-known RECONCILED object, must still get back the idempotent
+    # no-op -- not a stale-state error -- because "already succeeded" is not
+    # a staleness problem, it is the success case retry exists to handle.
+    # expected_state stays useful as a precondition for callers advancing a
+    # transition that has NOT yet happened (still-pending states).
+    if canonical["state"] == "LEDGER_POSTED":
+        return canonical  # idempotent no-op, even if caller's object is stale
+
     expected_state = event.get("state")
     if expected_state is not None and expected_state != canonical["state"]:
         raise CashEventStateError(
@@ -1068,8 +1182,6 @@ def post_external_cash_event_to_ledger(event: dict, *, append_ledger_fn, max_loc
             f"{canonical['state']!r}. Reload the event before retrying."
         )
 
-    if canonical["state"] == "LEDGER_POSTED":
-        return canonical  # idempotent no-op
     if canonical["state"] != "RECONCILED":
         raise CashEventStateError(f"cannot post to ledger from state {canonical['state']}; must be RECONCILED")
 
@@ -1415,9 +1527,23 @@ def filter_official_evaluation_observations(observations: list[dict], *, activat
     notation -- both real possibilities across data sources ingested here.
     An `observed_at` (or `activation_date`) that fails to parse is treated
     as ineligible/unknown rather than silently included, since a
-    fabricated/guessed instant could wrongly grant or deny eligibility."""
+    fabricated/guessed instant could wrongly grant or deny eligibility.
+
+    Post-review fix (2026-08-13 Codex review of this PR): an unparseable
+    `activation_date` used to silently set `activation_dt = None`, which
+    disabled the activation-date filter entirely and let pre-activation
+    production observations through -- a fail-OPEN on corrupt input, the
+    opposite of the invariant this docstring already claimed. A corrupt/
+    invalid `activation_date` is now a hard, explicit failure instead, per
+    section 12 of prompt-hardening-final-capital-agent-v0.2.md ("falhar
+    explicitamente em payload inválido")."""
     out = []
-    activation_dt = _parse_iso(activation_date) if activation_date else None
+    if activation_date:
+        activation_dt = _parse_iso(activation_date)
+        if activation_dt is None:
+            raise ValueError(f"invalid activation_date: {activation_date!r}")
+    else:
+        activation_dt = None
     for obs in observations:
         if obs.get("environment") != "production":
             continue
