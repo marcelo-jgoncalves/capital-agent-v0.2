@@ -517,6 +517,70 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             self.assertIsNotNone(data["confirmation"])
             self.assertAlmostEqual(ca.cash_balance(), cash_before - (2.0 * 4.9 + 0.5), places=2)
 
+    def test_confirm_execution_refuses_retry_after_already_completed(self):
+        # ADR-003 minimum viable fix: a retry against an id that already has
+        # a completed/<id>.json (e.g. an operator or automation retrying
+        # after a crash it believed failed) must be refused, not silently
+        # re-post a second ledger line for the same HER.
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args())
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=2.0, executed_price=4.9, fees=0.5,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            )
+            with patch("builtins.print"):
+                ca.cmd_confirm_execution(confirm_args)
+            cash_after_first = ca.cash_balance()
+            ledger_rows_after_first = len(ca.LEDGER_FILE.read_text(encoding="utf-8").splitlines())
+
+            with self.assertRaises(SystemExit):
+                ca.cmd_confirm_execution(confirm_args)
+
+            self.assertEqual(ca.cash_balance(), cash_after_first)
+            ledger_rows_after_retry = len(ca.LEDGER_FILE.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(ledger_rows_after_retry, ledger_rows_after_first)
+
+    def test_confirm_execution_serializes_concurrent_calls_for_same_id(self):
+        # Two threads racing confirm-execution for the same HER id must
+        # produce exactly one ledger posting: the lock serializes them, and
+        # whichever loses the race sees the completed/<id>.json the winner
+        # just wrote and refuses cleanly instead of posting a second time.
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args())
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+
+            results = []
+
+            def attempt():
+                confirm_args = argparse.Namespace(
+                    id=request_id, executed_quantity=2.0, executed_price=4.9, fees=0.5,
+                    executed_timestamp=None, category=None, ledger_type=None, notes="",
+                )
+                try:
+                    with patch("builtins.print"):
+                        ca.cmd_confirm_execution(confirm_args)
+                    results.append("ok")
+                except SystemExit:
+                    results.append("refused")
+
+            threads = [threading.Thread(target=attempt) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertEqual(results.count("ok"), 1)
+            self.assertEqual(results.count("refused"), 4)
+            self.assertEqual(len(list(ca.HR_COMPLETED_DIR.glob("*.json"))), 1)
+            self.assertEqual(len(list(ca.HR_PENDING_DIR.glob("*.json"))), 0)
+            ledger_lines = ca.LEDGER_FILE.read_text(encoding="utf-8").splitlines()
+            # header + exactly one posted row for this execution
+            data_rows = [ln for ln in ledger_lines[1:] if request_id in ln]
+            self.assertEqual(len(data_rows), 1)
+
     def test_cancel_execution_never_touches_ledger(self):
         with sandbox():
             with patch("builtins.print"):

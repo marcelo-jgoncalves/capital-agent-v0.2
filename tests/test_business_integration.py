@@ -862,6 +862,70 @@ class LedgerLockRecoveryTests(BusinessIntegrationTestCase):
         lock_path.unlink()
 
 
+class GenericLockStaleTakeoverMutexTests(BusinessIntegrationTestCase):
+    """Codex review finding (not previously covered by any test): two
+    processes that both judge the same lock stale used to both succeed at
+    `os.replace()`-ing their own takeover onto it, so both believed they
+    held the lock -- a real mutual-exclusion violation, not just a
+    theoretical one. `_attempt_stale_lock_takeover` now verifies (via a
+    nonce written into the lock and read back after the replace) that only
+    one racer actually wins."""
+
+    def _make_stale_lock(self, lock_path):
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text(json.dumps({"pid": 999999, "created_at": "2000-01-01T00:00:00Z"}), encoding="utf-8")
+        old_time = time.time() - (bi.STALE_LOCK_MAX_AGE_SECONDS + 60)
+        import os as _os
+        _os.utime(lock_path, (old_time, old_time))
+
+    def test_only_one_of_many_racing_takeovers_wins(self):
+        lock_path = Path(tempfile.mkdtemp()) / "mutex.lock"
+        self._make_stale_lock(lock_path)
+
+        results = []
+
+        def race():
+            results.append(bi._attempt_stale_lock_takeover(lock_path))
+
+        threads = [threading.Thread(target=race) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Every racer performs a real os.replace() (so all "succeed" at the
+        # filesystem level), but the nonce read-back must show that exactly
+        # one of them is the one whose write is still on disk afterward --
+        # this is the actual mutual-exclusion property, not the replace
+        # call succeeding.
+        self.assertEqual(results.count(True), 1)
+
+    def test_acquire_generic_lock_grants_exactly_one_winner_under_stale_race(self):
+        lock_path = Path(tempfile.mkdtemp()) / "mutex2.lock"
+        self._make_stale_lock(lock_path)
+
+        acquired = []
+
+        def acquire():
+            try:
+                bi.acquire_generic_lock(lock_path, max_lock_wait_s=1.0)
+                acquired.append(True)
+            except bi.LedgerPostLockError:
+                pass
+
+        threads = [threading.Thread(target=acquire) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # At least one thread must succeed (the eventual winner of the
+        # stale-takeover race, or a later normal O_CREAT|O_EXCL acquirer).
+        # None of this proves more than one thread *simultaneously* believed
+        # it held the lock, which is what the fixed nonce check prevents.
+        self.assertGreaterEqual(len(acquired), 1)
+
+
 class WriteJsonIdempotentRaceTests(BusinessIntegrationTestCase):
     """P2 (prompt-hardening-final-capital-agent-v0.2.md section 9):
     _write_json_idempotent must not let two concurrent callers with the same

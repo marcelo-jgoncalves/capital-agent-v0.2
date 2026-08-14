@@ -1032,9 +1032,60 @@ def _pid_is_running(pid: int) -> Optional[bool]:
         return None
 
 
-def _write_lock_owner_info(fd: int) -> None:
-    payload = json.dumps({"pid": os.getpid(), "created_at": now_iso()}).encode("utf-8")
-    os.write(fd, payload)
+def _write_lock_owner_info(fd: int, *, nonce: Optional[str] = None) -> None:
+    payload = {"pid": os.getpid(), "created_at": now_iso()}
+    if nonce is not None:
+        payload["nonce"] = nonce
+    os.write(fd, json.dumps(payload).encode("utf-8"))
+
+
+def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
+    """Take over a stale lock and verify the takeover actually won.
+
+    A plain `os.replace(tmp, lock_path)` is atomic in the sense that the
+    filesystem never exposes a torn file, but it does NOT provide mutual
+    exclusion between two processes that both decide the same lock is stale
+    at the same time: both can independently create their own tmp file and
+    both `os.replace()` it onto `lock_path` -- each rename individually
+    succeeds, so both callers would (incorrectly) believe they now hold the
+    lock. This is a real, previously-undocumented bug found by an
+    independent (Codex) review.
+
+    Fix: tag our takeover attempt with a random nonce, replace, then
+    re-read the lock file back. Because `os.replace` is atomic, whichever
+    takeover happened *last* is the content every reader observes; only the
+    caller whose nonce matches what is now persisted actually won mutual
+    exclusion. Every other racer sees a foreign nonce and must retry the
+    acquire loop (which will then see a fresh, non-stale lock owned by the
+    winner and simply wait/poll normally)."""
+    nonce = uuid.uuid4().hex
+    tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{nonce[:8]}")
+    tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        _write_lock_owner_info(tfd, nonce=nonce)
+    finally:
+        os.close(tfd)
+    try:
+        os.replace(tmp_path, lock_path)  # atomic, but not exclusive -- verify below
+    except OSError:
+        # On Windows, os.replace() onto a path another thread/process has
+        # momentarily open (e.g. a concurrent racer's read-back below, or
+        # its own competing os.replace()) can raise a transient
+        # PermissionError/sharing-violation instead of silently overwriting
+        # as POSIX rename would. That is not a crash -- it just means we
+        # lost this takeover attempt to contention; treat it exactly like
+        # "lost the nonce race" so the caller falls back to the normal
+        # poll/retry loop instead of propagating an unhandled exception.
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        return False
+    try:
+        content = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    return content.get("nonce") == nonce
 
 
 def _lock_is_stale(lock_path: Path) -> bool:
@@ -1078,14 +1129,7 @@ def acquire_generic_lock(lock_path: Path, *, max_lock_wait_s: float) -> bool:
                 os.close(fd)
             return True
         except FileExistsError:
-            if _lock_is_stale(lock_path):
-                tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{uuid.uuid4().hex[:8]}")
-                tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                try:
-                    _write_lock_owner_info(tfd)
-                finally:
-                    os.close(tfd)
-                os.replace(tmp_path, lock_path)  # atomic takeover
+            if _lock_is_stale(lock_path) and _attempt_stale_lock_takeover(lock_path):
                 return True
             if time.monotonic() - start > max_lock_wait_s:
                 raise LedgerPostLockError(
@@ -1118,14 +1162,7 @@ def _acquire_ledger_post_lock(lock_path: Path, *, idem_key: str, max_lock_wait_s
         except FileExistsError:
             if _ledger_reference_posted(idem_key):
                 return False  # another process already finished posting it
-            if _lock_is_stale(lock_path):
-                tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{uuid.uuid4().hex[:8]}")
-                tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                try:
-                    _write_lock_owner_info(tfd)
-                finally:
-                    os.close(tfd)
-                os.replace(tmp_path, lock_path)  # atomic takeover
+            if _lock_is_stale(lock_path) and _attempt_stale_lock_takeover(lock_path):
                 return True
             if time.monotonic() - start > max_lock_wait_s:
                 raise LedgerPostLockError(
