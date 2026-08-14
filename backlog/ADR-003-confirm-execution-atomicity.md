@@ -102,7 +102,17 @@ here.
 
 ## Decision
 
-**Pending owner sign-off.** No code changed by this ADR. The current
-behavior (non-atomic, crash-window duplication possible) is left in place;
-this document exists so the gap is tracked and not silently reintroduced
-as "already fixed" in a future report.
+**Pending owner sign-off** on item (3), the full combined-durable-record
+redesign. Items (1) and (2), the "minimum viable fix," were implemented in
+the engineering-quality round 1 pass (2026-08-14, see
+`ENGINEERING_QUALITY_ROUNDS.md`): `cmd_confirm_execution` now takes a
+`O_CREAT|O_EXCL` lock (`business_integration.acquire_generic_lock`) keyed
+on the HER id for its full critical section, and refuses cleanly if
+`completed/<id>.json` already exists instead of re-appending. This closes
+concurrent-confirmation duplication completely, and closes crash-retry
+duplication for any crash at or after the `completed/` write. The narrower
+gap in item (3) -- a crash strictly between `append_ledger` and the
+`completed/` write -- is still open; a retry after that specific crash
+window will still find no `completed/<id>.json` and re-append. This is the
+same "acceptable now, revisit before unattended multi-process operation"
+posture the original ADR took, just with a smaller remaining window.

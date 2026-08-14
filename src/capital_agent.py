@@ -807,52 +807,86 @@ def _find_pending_request(request_id: str) -> Path:
 
 
 def cmd_confirm_execution(args):
-    path = _find_pending_request(args.id)
-    data = json.loads(path.read_text(encoding="utf-8"))
-
-    executed_total = round(args.executed_quantity * args.executed_price + args.fees, 2)
-    action = data["action"]
-    if action == "BUY":
-        ledger_type = "buy"
-    elif action == "SELL":
-        ledger_type = "sell"
-    elif action in {"TRANSFER", "WITHDRAWAL"}:
-        ledger_type = "capital_out"
-    elif action == "PAYMENT":
-        ledger_type = "expense"
-    else:
-        ledger_type = args.ledger_type or "adjustment"
-
-    if ledger_type in {"buy", "expense", "fee", "tax", "capital_out"} and executed_total > cash_balance():
-        raise SystemExit("refused: reported execution would exceed verified cash; investigate before recording")
-
-    confirmation = {
-        "confirmed_at": now_iso(),
-        "executed_quantity": args.executed_quantity,
-        "executed_price": args.executed_price,
-        "fees_brl": round(args.fees, 2),
-        "executed_total_brl": executed_total,
-        "executed_timestamp": args.executed_timestamp or now_iso(),
-        "notes": args.notes,
-    }
-    data["status"] = "completed"
-    data["confirmation"] = confirmation
-
-    append_ledger(
-        ledger_type, args.category or "market", executed_total,
-        f"Human-confirmed execution of {data['id']} ({action} {data.get('asset')})",
-        data["id"],
-    )
-
+    # ADR-003 minimum viable fix: serialize the whole read-append-move
+    # critical section per HER id, and treat an existing completed/<id>.json
+    # as proof the financial posting already happened. This closes the two
+    # concrete failure modes an independent (Codex) review found:
+    # crash-retry duplication (process dies after the ledger append but
+    # before the HER is moved to completed/, and a retry re-appends) and
+    # concurrent-confirmation duplication (two confirm-execution calls for
+    # the same id both pass _find_pending_request before either moves the
+    # file). It does NOT make the ledger-append + file-move itself a single
+    # durable transaction (see ADR-003 item 3, deliberately deferred); a
+    # crash strictly between the ledger append and the completed/ write is
+    # still possible in principle, but the lock plus the completed/ check
+    # below mean no retry or concurrent caller can ever produce a *second*
+    # ledger line for the same HER id.
     HR_COMPLETED_DIR.mkdir(parents=True, exist_ok=True)
-    (HR_COMPLETED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    path.unlink()
-    append_index("execution_requests", {
-        "id": data["id"], "date": confirmation["confirmed_at"], "action": action,
-        "asset": data.get("asset"), "executed_total_brl": executed_total,
-        "status": "completed", "path": f"execution/human_requests/completed/{path.name}",
-    })
-    print(json.dumps({"id": data["id"], "status": "completed", "verified_cash_brl": cash_balance()}, indent=2))
+    lock_dir = HUMAN_REQUESTS_DIR / "_wal"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"confirm-{args.id}.lock"
+    bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
+    try:
+        completed_path = HR_COMPLETED_DIR / f"{args.id}.json"
+        if completed_path.exists():
+            existing = json.loads(completed_path.read_text(encoding="utf-8"))
+            raise SystemExit(
+                f"refused: {args.id} was already confirmed at "
+                f"{existing.get('confirmation', {}).get('confirmed_at', '?')}; "
+                "confirm-execution is not re-postable. Re-run "
+                "with a fresh execution request if a correction is needed."
+            )
+
+        path = _find_pending_request(args.id)
+        data = json.loads(path.read_text(encoding="utf-8"))
+
+        executed_total = round(args.executed_quantity * args.executed_price + args.fees, 2)
+        action = data["action"]
+        if action == "BUY":
+            ledger_type = "buy"
+        elif action == "SELL":
+            ledger_type = "sell"
+        elif action in {"TRANSFER", "WITHDRAWAL"}:
+            ledger_type = "capital_out"
+        elif action == "PAYMENT":
+            ledger_type = "expense"
+        else:
+            ledger_type = args.ledger_type or "adjustment"
+
+        if ledger_type in {"buy", "expense", "fee", "tax", "capital_out"} and executed_total > cash_balance():
+            raise SystemExit("refused: reported execution would exceed verified cash; investigate before recording")
+
+        confirmation = {
+            "confirmed_at": now_iso(),
+            "executed_quantity": args.executed_quantity,
+            "executed_price": args.executed_price,
+            "fees_brl": round(args.fees, 2),
+            "executed_total_brl": executed_total,
+            "executed_timestamp": args.executed_timestamp or now_iso(),
+            "notes": args.notes,
+        }
+        data["status"] = "completed"
+        data["confirmation"] = confirmation
+
+        append_ledger(
+            ledger_type, args.category or "market", executed_total,
+            f"Human-confirmed execution of {data['id']} ({action} {data.get('asset')})",
+            data["id"],
+        )
+
+        (HR_COMPLETED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        path.unlink()
+        append_index("execution_requests", {
+            "id": data["id"], "date": confirmation["confirmed_at"], "action": action,
+            "asset": data.get("asset"), "executed_total_brl": executed_total,
+            "status": "completed", "path": f"execution/human_requests/completed/{path.name}",
+        })
+        print(json.dumps({"id": data["id"], "status": "completed", "verified_cash_brl": cash_balance()}, indent=2))
+    finally:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
 
 
 def cmd_cancel_execution(args):
