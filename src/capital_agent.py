@@ -860,9 +860,9 @@ def cmd_confirm_execution(args):
             # was correct for BUY, where fees are an added cost, but wrong
             # for SELL, where it inflated recorded cash inflow by 2x the
             # fee instead of reducing it once.)
-            executed_total = round(gross - args.fees, 2)
-            if executed_total < 0:
+            if args.fees > gross:
                 raise SystemExit("refused: reported fees exceed gross sale proceeds; investigate before recording")
+            executed_total = round(gross - args.fees, 2)
         else:
             executed_total = round(gross + args.fees, 2)
         if action == "BUY":

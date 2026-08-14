@@ -1039,12 +1039,13 @@ def _write_lock_owner_info(fd: int, *, nonce: Optional[str] = None) -> None:
     os.write(fd, json.dumps(payload).encode("utf-8"))
 
 
-# A stale-lock takeover is only a handful of local filesystem operations
-# (open, write, close, replace, unlink); if the arbitration file below is
-# ever found older than this, its creator is assumed crashed mid-takeover
-# rather than legitimately still working, and it self-heals. Deliberately
-# much shorter than STALE_LOCK_MAX_AGE_SECONDS, which bounds a whole
-# caller-defined critical section, not just the takeover mechanics.
+# Documented recovery threshold, not an automatic one: a stale-lock takeover
+# is only a handful of local filesystem operations (open, write, close,
+# replace, unlink), so an operator manually clearing an orphaned
+# `<lock_path>.takeover-arbitration` file older than this can be confident
+# its creator crashed rather than merely stalled. Not read by
+# `_attempt_stale_lock_takeover` itself -- see the ABA-race comment there
+# for why this function does not attempt automatic recovery of that file.
 TAKEOVER_ARBITRATION_MAX_AGE_SECONDS = 5
 
 
@@ -1081,15 +1082,32 @@ def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
         afd = os.open(str(arbitration_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.close(afd)
     except FileExistsError:
-        try:
-            age_s = time.time() - arbitration_path.stat().st_mtime
-        except OSError:
-            age_s = 0.0
-        if age_s > TAKEOVER_ARBITRATION_MAX_AGE_SECONDS:
-            try:
-                arbitration_path.unlink()
-            except OSError:
-                pass
+        # Deliberately does NOT attempt to age out and take over a stale
+        # arbitration file itself. An earlier version did (mirroring
+        # `_lock_is_stale`'s age-based recovery), but an independent (Codex)
+        # review caught a real ABA race in it: process A holds the
+        # arbitration file but stalls past the age threshold (GC pause,
+        # scheduler delay, debugger breakpoint -- not necessarily a crash);
+        # process B judges it stale, deletes it, and creates its own; A
+        # resumes, reaches its own `finally`, and unconditionally deletes
+        # what is now B's arbitration file, at which point a third racer C
+        # can win concurrently with B still "inside" its critical section.
+        # The arbitration file's only job is to make ONE takeover happen at
+        # a time; recovering it opportunistically defeats that. Since the
+        # guarded section is a handful of local filesystem calls (at most
+        # low milliseconds under normal operation), the correct failure
+        # mode for a genuinely orphaned arbitration file (its creator was
+        # killed, not just delayed) is: every racer keeps returning False,
+        # `acquire_generic_lock`'s own `max_lock_wait_s` eventually raises
+        # `LedgerPostLockError` (an explicit, visible failure), and an
+        # operator manually removes `<lock_path>.takeover-arbitration` --
+        # consistent with this project's preference for explicit human
+        # recovery over auto-magic in edge cases (see
+        # AI_OPERATING_MANUAL.md's custody invariant discussion). This is
+        # the same reasoning `TAKEOVER_ARBITRATION_MAX_AGE_SECONDS` used to
+        # encode as an automatic timeout; it is now unused by this function
+        # and kept only as a documented recovery threshold for that manual
+        # step.
         return False  # another racer is (or very recently was) taking over
 
     try:
