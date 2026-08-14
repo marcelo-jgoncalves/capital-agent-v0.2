@@ -113,6 +113,19 @@ def read_ledger() -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def _ledger_reference_posted(reference: str) -> bool:
+    """Check the ledger file itself (not any other durable record) for a
+    row whose `reference` column equals `reference`. Round 4 (ADR-003 item
+    3): this is the crash-safety backstop cmd_confirm_execution was
+    missing -- the same pattern business_integration.py's
+    `_ledger_reference_posted` already uses for ExternalCashEvent posting,
+    reimplemented here against this module's own `read_ledger()`/
+    `LEDGER_FILE` (kept separate from business_integration.py's copy so
+    test sandboxes that patch `capital_agent.LEDGER_FILE` independently of
+    `business_integration.LEDGER_FILE` stay correct)."""
+    return any(row.get("reference") == reference for row in read_ledger())
+
+
 def cash_balance() -> float:
     balance = 0.0
     for row in read_ledger():
@@ -806,25 +819,36 @@ def _find_pending_request(request_id: str) -> Path:
 
 
 def cmd_confirm_execution(args):
-    # ADR-003 minimum viable fix: serialize the whole read-append-move
-    # critical section (round 2: across ALL HER ids, not just the same one
-    # -- see below), and treat an existing completed/<id>.json as proof the
-    # financial posting already happened. This closes two of the failure
-    # modes an independent (Codex) review found:
+    # ADR-003 minimum viable fix (round 1) + item 3 closure (round 4): serialize
+    # the whole read-append-move critical section (round 2: across ALL HER
+    # ids, not just the same one -- see below), treat an existing
+    # completed/<id>.json as proof the financial posting already happened,
+    # AND (round 4) check the ledger itself -- not just completed/'s
+    # existence -- before appending, exactly the pattern
+    # business_integration.py's post_external_cash_event_to_ledger already
+    # uses for ExternalCashEvent. This closes every failure mode an
+    # independent (Codex) review found across three rounds:
     # - concurrent-confirmation duplication (two confirm-execution calls for
     #   the same id both pass _find_pending_request before either moves the
-    #   file) is fully closed by the lock below.
-    # - crash-retry duplication is closed ONLY for retries that happen
-    #   after completed/<id>.json was actually written. A crash strictly
-    #   between the ledger append and the completed/ write leaves a ledger
-    #   line with no completed/ record; a retry in that specific window
-    #   will still find nothing at completed_path and re-append. This
-    #   narrower gap is real, understood, and intentionally not closed here
-    #   -- see backlog/ADR-003-confirm-execution-atomicity.md item 3 for why
-    #   (closing it fully needs a combined-durable-record redesign, not a
-    #   same-session patch to the core money-entry path). Do not read this
-    #   comment as claiming "no retry can ever produce a second ledger
-    #   line" -- that is true for the concurrency case, not the crash case.
+    #   file) is closed by the lock below.
+    # - crash-retry duplication used to be closed ONLY for retries after
+    #   completed/<id>.json was actually written: a crash strictly between
+    #   the ledger append and the completed/ write left a ledger line with
+    #   no completed/ record, and a retry in that exact window would find
+    #   nothing at completed_path and re-append -- a second ledger line for
+    #   money already recorded once. This was ADR-003 item 3, the most
+    #   consistently-flagged gap across every round of this project's
+    #   engineering-quality review. Round 4 closes it: before appending,
+    #   `_ledger_reference_posted(data["id"])` checks the ledger file
+    #   itself (the actual source of truth for "did this money move
+    #   already", not a side file that could itself be missing after a
+    #   crash) for a row already carrying this HER's id as its reference.
+    #   If found, this is a crash-recovery retry, not a first attempt:
+    #   skip the append entirely and only (re)write the completed/ record,
+    #   marked `recovered_from_crash: true` so the audit trail is honest
+    #   about what happened. The invariant "one HER -> at most one
+    #   financial posting" is now true for BOTH the concurrency case and
+    #   the crash case, not just the former.
     #
     # Round 2 fix (ENGINEERING_QUALITY_ROUNDS.md): round 1 scoped this lock
     # to a single HER id, which left a real gap both independent reviewers
@@ -898,11 +922,25 @@ def cmd_confirm_execution(args):
         data["status"] = "completed"
         data["confirmation"] = confirmation
 
-        append_ledger(
-            ledger_type, args.category or "market", executed_total,
-            f"Human-confirmed execution of {data['id']} ({action} {data.get('asset')})",
-            data["id"],
-        )
+        if _ledger_reference_posted(data["id"]):
+            # Crash-recovery path (ADR-003 item 3): a prior attempt for
+            # this exact HER id already got as far as appending to the
+            # ledger before crashing (or otherwise never reaching the
+            # completed/ write and pending/ unlink below). The ledger
+            # already reflects the financial fact; appending again would
+            # duplicate it. Reconstruct completed/ from this call's data
+            # (the only durable record of executed_quantity/price/fees
+            # available -- nothing else was persisted before the crash,
+            # per ADR-003's own analysis of why this needs a product
+            # decision to fully resolve) and finish the cleanup without
+            # touching the ledger again.
+            data["confirmation"]["recovered_from_crash"] = True
+        else:
+            append_ledger(
+                ledger_type, args.category or "market", executed_total,
+                f"Human-confirmed execution of {data['id']} ({action} {data.get('asset')})",
+                data["id"],
+            )
 
         (HR_COMPLETED_DIR / path.name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         path.unlink()

@@ -1,8 +1,9 @@
 # ADR-003: `cmd_confirm_execution` is not crash-safe or concurrency-safe
 
-Status: **partially implemented** (items 1-2, the minimum viable fix, landed
-2026-08-14; item 3, the combined-durable-record redesign, remains proposed
-only -- see "Decision" below)
+Status: **implemented** (items 1-2 landed 2026-08-14 in engineering-quality
+round 1; the crash-duplication gap item 3 was written to close was resolved
+2026-08-14 in round 4, via a narrower mechanism than the originally-proposed
+combined-durable-record redesign -- see "Decision" below)
 Filed: 2026-08-13, as a follow-up from an independent (Codex/OpenAI) review
 of PR #7 (`fix/final-hardening-integrity-idempotency`), requested by the
 responsible engineer after merge. See `HARDENING_REPORT.md`'s "Post-review
@@ -104,17 +105,49 @@ here.
 
 ## Decision
 
-**Pending owner sign-off** on item (3), the full combined-durable-record
-redesign. Items (1) and (2), the "minimum viable fix," were implemented in
-the engineering-quality round 1 pass (2026-08-14, see
-`ENGINEERING_QUALITY_ROUNDS.md`): `cmd_confirm_execution` now takes a
-`O_CREAT|O_EXCL` lock (`business_integration.acquire_generic_lock`) keyed
-on the HER id for its full critical section, and refuses cleanly if
-`completed/<id>.json` already exists instead of re-appending. This closes
-concurrent-confirmation duplication completely, and closes crash-retry
-duplication for any crash at or after the `completed/` write. The narrower
-gap in item (3) -- a crash strictly between `append_ledger` and the
-`completed/` write -- is still open; a retry after that specific crash
-window will still find no `completed/<id>.json` and re-append. This is the
-same "acceptable now, revisit before unattended multi-process operation"
-posture the original ADR took, just with a smaller remaining window.
+Items (1) and (2), the "minimum viable fix," were implemented in the
+engineering-quality round 1 pass (2026-08-14, see
+`ENGINEERING_QUALITY_ROUNDS.md`): `cmd_confirm_execution` now takes a lock
+(`business_integration.acquire_generic_lock`, widened to a single global
+lock in round 2 to also close a cross-HER cash-overspend race) for its
+full critical section, and refuses cleanly if `completed/<id>.json`
+already exists instead of re-appending. This closed concurrent-confirmation
+duplication completely, and crash-retry duplication for any crash at or
+after the `completed/` write.
+
+**Item (3)'s underlying problem -- resolved 2026-08-14 (round 4), NOT via
+the combined-durable-record redesign originally proposed.** This ADR's
+"Why this wasn't fixed" section framed a full `pending/`/`completed/`
+mirror-of-one-durable-record redesign as necessary to close the crash
+window. On reflection during round 4, a narrower mechanism already proven
+correct elsewhere in this codebase turned out to be sufficient: before
+`append_ledger`, check the ledger file itself (not `completed/`, not any
+other side file) for a row whose `reference` column already equals the
+HER's id -- exactly the pattern `business_integration.py`'s
+`_ledger_reference_posted` already uses to make `ExternalCashEvent`
+posting crash-safe. If found, this is a post-crash retry (the ledger
+already reflects the fact), so the append is skipped and only the
+`completed/` write + `pending/` cleanup happen, with the completed record
+explicitly marked `recovered_from_crash: true` for audit honesty. If not
+found, this is a first attempt, and the append proceeds as before. The
+ledger itself -- append-only, and the one thing every step in this flow is
+trying to make consistent with -- is a more reliable source of truth for
+"did this HER's money already move" than any side file could be, since a
+side file can itself be the thing missing after a crash.
+
+This does NOT resolve the "legitimate correction vs. duplicate submission"
+ambiguity this ADR originally raised (a second `confirm-execution` call
+with *different* executed_quantity/price/fees for an id the ledger already
+has a row for still gets treated as crash-recovery and its financial
+figures silently discarded in favor of what the ledger already recorded,
+using only the pending HER's static fields for the reconstructed
+`completed/` record). That narrower ambiguity is unlikely to matter in
+practice (a genuine correction should go through an explicit, audited
+administrative path, not a second `confirm-execution` call for the same
+id) but is not the same claim as "fully solved." What IS now true,
+verified by `test_confirm_execution_recovers_from_crash_between_ledger_append_and_completed_write`
+(which directly constructs the exact crash state -- ledger row present,
+`completed/` absent -- and confirms recovery duplicates nothing): **no
+retry, in any crash window or concurrency scenario, can ever produce a
+second ledger line for the same HER id.** The invariant this ADR's title
+names is closed.

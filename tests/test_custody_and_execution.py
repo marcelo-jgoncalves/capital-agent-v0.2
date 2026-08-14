@@ -591,6 +591,47 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             ledger_rows_after_retry = len(ca.LEDGER_FILE.read_text(encoding="utf-8").splitlines())
             self.assertEqual(ledger_rows_after_retry, ledger_rows_after_first)
 
+    def test_confirm_execution_recovers_from_crash_between_ledger_append_and_completed_write(self):
+        # Round 4, ADR-003 item 3: simulates the exact crash window that
+        # was the single most consistently-flagged gap across every round
+        # of this project's engineering-quality review -- a process
+        # crashes after append_ledger() but before writing completed/<id>.json
+        # and unlinking pending/<id>.json. A naive retry, seeing no
+        # completed/ record, would re-append and duplicate the financial
+        # posting. This constructs that exact state directly (append to
+        # the ledger with the HER id as reference, leave the HER pending)
+        # and confirms a retry recovers cleanly: no second ledger line,
+        # completed/ gets written, pending/ gets cleaned up.
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args())
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+            cash_before = ca.cash_balance()
+
+            # Simulate the crash: the ledger append happened (as
+            # confirm-execution's real code would do), but the process
+            # died before writing completed/ or removing pending/.
+            ca.append_ledger("buy", "market", 10.3, "simulated pre-crash append", request_id)
+            ledger_rows_after_simulated_crash = len(ca.LEDGER_FILE.read_text(encoding="utf-8").splitlines())
+
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=2.0, executed_price=4.9, fees=0.5,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            )
+            with patch("builtins.print"):
+                ca.cmd_confirm_execution(confirm_args)
+
+            # No second ledger line for this recovery -- cash only reflects
+            # the one (simulated pre-crash) append, not a second one too.
+            ledger_rows_after_recovery = len(ca.LEDGER_FILE.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(ledger_rows_after_recovery, ledger_rows_after_simulated_crash)
+            self.assertAlmostEqual(ca.cash_balance(), cash_before - 10.3, places=2)
+
+            # Recovery still completes the HER lifecycle correctly.
+            self.assertEqual(len(list(ca.HR_PENDING_DIR.glob("*.json"))), 0)
+            completed = json.loads((ca.HR_COMPLETED_DIR / f"{request_id}.json").read_text(encoding="utf-8"))
+            self.assertTrue(completed["confirmation"]["recovered_from_crash"])
+
     def test_confirm_execution_serializes_concurrent_calls_for_same_id(self):
         # Two threads racing confirm-execution for the same HER id must
         # produce exactly one ledger posting: the lock serializes them, and
