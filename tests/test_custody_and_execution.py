@@ -632,6 +632,58 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             completed = json.loads((ca.HR_COMPLETED_DIR / f"{request_id}.json").read_text(encoding="utf-8"))
             self.assertTrue(completed["confirmation"]["recovered_from_crash"])
 
+    def test_confirm_execution_recovery_is_not_blocked_by_its_own_pre_crash_spend(self):
+        # Second Codex finding on the same fix: the cash-sufficiency check
+        # must not run against a crash-recovery retry, because the prior
+        # (pre-crash) append already reduced cash_balance() by the full
+        # executed_total. If the check ran unconditionally, a recovering
+        # BUY that spent nearly all available cash could be wrongly refused
+        # with "would exceed verified cash" on its recovery retry, even
+        # though no new money is about to move -- blocking the HER from
+        # ever reaching completed/ despite the ledger already being
+        # correct. Uses a BUY sized so that a second (incorrectly
+        # double-counted) check against the post-spend balance would fail,
+        # to prove the check is genuinely skipped, not just coincidentally
+        # passing.
+        with sandbox():
+            # Bypasses the request-time single-allocation policy cap (500,
+            # i.e. 0.5 * initial 1000 equity) by writing the pending HER
+            # directly -- orthogonal to this confirm-time recovery check,
+            # and the amount needs to be large enough that a wrongly-run
+            # balance check against the post-spend total would fail.
+            request_id = "HER-TEST-RECOVERY-BALANCE"
+            (ca.HR_PENDING_DIR / f"{request_id}.json").write_text(json.dumps({
+                "id": request_id, "created_at": ca.now_iso(), "decision_id": None,
+                "approval_id": None, "action": "BUY", "asset": "TEST",
+                "quantity": 100.0, "max_price": 9.0, "max_total_capital": 900.0,
+                "valid_until": "2099-01-01T00:00:00-03:00", "reason": "test",
+                "expected_upside": "test", "maximum_plausible_loss": 900.0,
+                "critic_assessment": "test", "reserve_instrument_claimed": False,
+                "policy_status": "PASSED", "critical_decision": False,
+                "criticality_reasons": [], "status": "pending",
+                "instructions": "test", "confirmation": None,
+            }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            cash_before = ca.cash_balance()  # 1000.0 in the sandbox's initial ledger
+
+            # Simulate the crash after a near-total-cash BUY was appended.
+            ca.append_ledger("buy", "market", 900.0, "simulated pre-crash append", request_id)
+            self.assertAlmostEqual(ca.cash_balance(), cash_before - 900.0, places=2)
+
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=100.0, executed_price=9.0, fees=0.0,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            )
+            # executed_total (900.0) comfortably exceeds the POST-spend
+            # balance (100.0) -- if the balance check incorrectly ran
+            # against recovery, this would raise SystemExit instead of
+            # recovering cleanly.
+            with patch("builtins.print"):
+                ca.cmd_confirm_execution(confirm_args)
+
+            completed = json.loads((ca.HR_COMPLETED_DIR / f"{request_id}.json").read_text(encoding="utf-8"))
+            self.assertTrue(completed["confirmation"]["recovered_from_crash"])
+            self.assertEqual(len(list(ca.HR_PENDING_DIR.glob("*.json"))), 0)
+
     def test_confirm_execution_serializes_concurrent_calls_for_same_id(self):
         # Two threads racing confirm-execution for the same HER id must
         # produce exactly one ledger posting: the lock serializes them, and

@@ -907,7 +907,18 @@ def cmd_confirm_execution(args):
         else:
             ledger_type = args.ledger_type or "adjustment"
 
-        if ledger_type in {"buy", "expense", "fee", "tax", "capital_out"} and executed_total > cash_balance():
+        # Round 4, second Codex finding on the same fix: the cash-sufficiency
+        # check below must NOT run for a crash-recovery retry. A prior
+        # attempt already appended to the ledger before crashing, so
+        # cash_balance() already reflects that spend; checking a recovering
+        # BUY/expense/fee/tax/capital_out retry's executed_total against
+        # that already-reduced balance could wrongly refuse recovery with
+        # "would exceed verified cash" even though no new money is about to
+        # move. Checking `_ledger_reference_posted` FIRST and skipping the
+        # balance check entirely on that path closes this without
+        # reintroducing any duplication risk (recovery never appends).
+        already_posted = _ledger_reference_posted(data["id"])
+        if not already_posted and ledger_type in {"buy", "expense", "fee", "tax", "capital_out"} and executed_total > cash_balance():
             raise SystemExit("refused: reported execution would exceed verified cash; investigate before recording")
 
         confirmation = {
@@ -922,7 +933,7 @@ def cmd_confirm_execution(args):
         data["status"] = "completed"
         data["confirmation"] = confirmation
 
-        if _ledger_reference_posted(data["id"]):
+        if already_posted:
             # Crash-recovery path (ADR-003 item 3): a prior attempt for
             # this exact HER id already got as far as appending to the
             # ledger before crashing (or otherwise never reaching the
