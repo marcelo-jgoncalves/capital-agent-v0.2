@@ -10,6 +10,7 @@ import contextlib
 import importlib.util
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -652,6 +653,40 @@ class ReserveAssetTests(unittest.TestCase):
                 with patch("builtins.print"):
                     ca.cmd_record_reserve_asset(argparse.Namespace(execution_id=request_id, category="reserve", note="a"))
             self.assertAlmostEqual(ca.current_equity_floor(), equity_before, places=2)
+
+    def test_concurrent_bookings_of_different_execution_ids_do_not_lose_an_entry(self):
+        """Post-review fix: the read-check-append-write critical section is
+        now serialized with a cross-process lock, so two callers booking
+        DIFFERENT execution_ids concurrently must not lose one entry to a
+        last-writer-wins overwrite."""
+        with sandbox():
+            request_id_a = self._confirm_a_buy(quantity=1.0, price=20.0)
+            request_id_b = self._confirm_a_buy(quantity=1.0, price=15.0)
+
+            barrier = threading.Barrier(2)
+            errors = []
+
+            def book(request_id, note):
+                try:
+                    barrier.wait()
+                    with patch("builtins.print"):
+                        ca.cmd_record_reserve_asset(
+                            argparse.Namespace(execution_id=request_id, category="reserve", note=note)
+                        )
+                except Exception as exc:  # pragma: no cover - surfaced via errors list
+                    errors.append(exc)
+
+            t1 = threading.Thread(target=book, args=(request_id_a, "a"))
+            t2 = threading.Thread(target=book, args=(request_id_b, "b"))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+            self.assertEqual(errors, [])
+            assets = ca.load_reserve_assets()
+            booked_ids = {a["execution_id"] for a in assets}
+            self.assertEqual(booked_ids, {request_id_a, request_id_b})
 
     def test_idempotency_survives_reload_between_calls(self):
         # Reloads reserve_assets.json from disk on every call rather than

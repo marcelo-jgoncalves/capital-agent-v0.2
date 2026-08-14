@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 import uuid
 from dataclasses import dataclass
@@ -944,48 +945,67 @@ def cmd_record_reserve_asset(args):
     book_value = data["confirmation"]["executed_total_brl"]
     asset_name = data.get("asset")
 
-    # Idempotency check: does a reserve asset entry already exist for this
-    # execution_id? Reload from disk each time (never trust an in-memory
-    # copy) so concurrent/repeated invocations always see the latest
-    # persisted state.
-    assets = load_reserve_assets()
-    existing = [a for a in assets if a.get("execution_id") == args.execution_id]
-    if existing:
-        prior = existing[0]
-        same_content = (
-            prior.get("asset") == asset_name
-            and prior.get("category") == args.category
-            and round(float(prior.get("book_value_brl", 0)), 2) == round(float(book_value), 2)
-        )
-        if same_content:
-            print(json.dumps({
-                "recorded": prior,
-                "idempotent": True,
-                "verified_equity_floor_brl": current_equity_floor(),
-            }, indent=2))
-            return
-        raise SystemExit(
-            f"conflict: execution_id '{args.execution_id}' is already booked as a "
-            f"reserve asset with different content (existing: asset={prior.get('asset')!r} "
-            f"category={prior.get('category')!r} book_value_brl={prior.get('book_value_brl')!r}; "
-            f"requested: asset={asset_name!r} category={args.category!r} book_value_brl={book_value!r}). "
-            "Refusing to duplicate or silently overwrite an existing booking. If the "
-            "existing entry is wrong, correct it through an explicit, audited "
-            "administrative process -- do not resubmit with different values."
-        )
+    # Post-review fix (2026-08-13 Codex review of this PR): the
+    # read-check-append-write below used to run with no cross-process lock
+    # and a non-atomic write_text(). Two processes booking DIFFERENT
+    # execution_ids concurrently could both read the same `assets` list and
+    # the last write would silently discard the other's entry (lost
+    # update); a crash mid-write_text() could also leave reserve_assets.json
+    # truncated/corrupt. Both closed the same way ledger-post concurrency is
+    # closed elsewhere in this codebase: an O_CREAT|O_EXCL lock file for the
+    # duration of the read-check-write, plus temp-file + os.replace() for
+    # the write itself.
+    lock_path = RESERVE_ASSETS_FILE.with_suffix(RESERVE_ASSETS_FILE.suffix + ".lock")
+    acquired = bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
+    try:
+        # Reload from disk each time (never trust an in-memory copy), now
+        # under the lock so no concurrent writer can interleave.
+        assets = load_reserve_assets()
+        existing = [a for a in assets if a.get("execution_id") == args.execution_id]
+        if existing:
+            prior = existing[0]
+            same_content = (
+                prior.get("asset") == asset_name
+                and prior.get("category") == args.category
+                and round(float(prior.get("book_value_brl", 0)), 2) == round(float(book_value), 2)
+            )
+            if same_content:
+                print(json.dumps({
+                    "recorded": prior,
+                    "idempotent": True,
+                    "verified_equity_floor_brl": current_equity_floor(),
+                }, indent=2))
+                return
+            raise SystemExit(
+                f"conflict: execution_id '{args.execution_id}' is already booked as a "
+                f"reserve asset with different content (existing: asset={prior.get('asset')!r} "
+                f"category={prior.get('category')!r} book_value_brl={prior.get('book_value_brl')!r}; "
+                f"requested: asset={asset_name!r} category={args.category!r} book_value_brl={book_value!r}). "
+                "Refusing to duplicate or silently overwrite an existing booking. If the "
+                "existing entry is wrong, correct it through an explicit, audited "
+                "administrative process -- do not resubmit with different values."
+            )
 
-    entry = {
-        "id": f"RA-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
-        "execution_id": args.execution_id,
-        "asset": asset_name,
-        "category": args.category,
-        "book_value_brl": book_value,
-        "recorded_at": now_iso(),
-        "note": args.note,
-    }
-    assets.append(entry)
-    RESERVE_ASSETS_FILE.write_text(json.dumps(assets, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(json.dumps({"recorded": entry, "idempotent": False, "verified_equity_floor_brl": current_equity_floor()}, indent=2))
+        entry = {
+            "id": f"RA-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+            "execution_id": args.execution_id,
+            "asset": asset_name,
+            "category": args.category,
+            "book_value_brl": book_value,
+            "recorded_at": now_iso(),
+            "note": args.note,
+        }
+        assets.append(entry)
+        tmp_path = RESERVE_ASSETS_FILE.with_suffix(RESERVE_ASSETS_FILE.suffix + f".tmp-{uuid.uuid4().hex[:8]}")
+        tmp_path.write_text(json.dumps(assets, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp_path, RESERVE_ASSETS_FILE)
+        print(json.dumps({"recorded": entry, "idempotent": False, "verified_equity_floor_brl": current_equity_floor()}, indent=2))
+    finally:
+        if acquired:
+            try:
+                lock_path.unlink()
+            except OSError:
+                pass
 
 
 def _list_json(dir_path: Path) -> list[dict]:

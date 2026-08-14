@@ -309,6 +309,23 @@ class ExternalCashEventTests(BusinessIntegrationTestCase):
         with self.assertRaises(bi.CashEventStateError):
             bi.post_external_cash_event_to_ledger(stale, append_ledger_fn=lambda *a: None)
 
+    def test_retry_with_stale_expected_state_after_success_is_still_idempotent(self):
+        """Post-review fix: a retry carrying a stale (but PRE-success)
+        expected_state, issued AFTER the event already reached
+        LEDGER_POSTED, must return the idempotent no-op, not a
+        CashEventStateError -- "already succeeded" is not staleness, it's
+        exactly the case retry exists to handle."""
+        ev = self._reconciled_event()
+        calls = []
+        first = bi.post_external_cash_event_to_ledger(ev, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(first["state"], "LEDGER_POSTED")
+
+        stale_retry = dict(ev)
+        stale_retry["state"] = "RECONCILED"  # caller's last-known state, now stale
+        second = bi.post_external_cash_event_to_ledger(stale_retry, append_ledger_fn=lambda *a: calls.append(a))
+        self.assertEqual(second["state"], "LEDGER_POSTED")
+        self.assertEqual(len(calls), 1)  # no second ledger call
+
     def test_correct_state_uses_exclusively_persisted_data(self):
         ev = self._reconciled_event()
         minimal = {"id": ev["id"], "state": ev["state"]}  # no financial fields at all
@@ -907,6 +924,56 @@ class WriteJsonIdempotentRaceTests(BusinessIntegrationTestCase):
         self.assertTrue(c2)
         self.assertEqual(len(list(bi.BUSINESS_SIGNALS_DIR.glob("*.json"))), 2)
 
+    def test_legacy_pre_index_record_is_found_not_duplicated(self):
+        """Post-review fix: a record written before the claim-index existed
+        (plain <record_id>.json with an idempotency_key field, no claim
+        file) must be found by a claim-miss fallback scan and backfilled,
+        not duplicated."""
+        legacy_path = bi.BUSINESS_SIGNALS_DIR / "LEGACY-1.json"
+        bi.BUSINESS_SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_text(json.dumps({"idempotency_key": "legacy-key", "v": "original"}), encoding="utf-8")
+
+        got, created = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "NEW-1", "legacy-key", {"idempotency_key": "legacy-key", "v": "new"}
+        )
+        self.assertFalse(created)
+        self.assertEqual(got["v"], "original")
+        record_files = [p for p in bi.BUSINESS_SIGNALS_DIR.glob("*.json")]
+        self.assertEqual(len(record_files), 1)  # no NEW-1.json created
+
+    def test_similar_keys_do_not_collide_on_claim_lookup(self):
+        """Post-review fix: claim filenames are now a full sha256 hash of
+        the key (not a lossy char-substitution), and claim reads validate
+        the stored idempotency_key matches the requested one."""
+        r1, c1 = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-SLASH", "a/b", {"idempotency_key": "a/b"}
+        )
+        r2, c2 = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-QMARK", "a?b", {"idempotency_key": "a?b"}
+        )
+        self.assertTrue(c1)
+        self.assertTrue(c2)
+        self.assertEqual(r1["idempotency_key"], "a/b")
+        self.assertEqual(r2["idempotency_key"], "a?b")
+        self.assertEqual(len(list(bi.BUSINESS_SIGNALS_DIR.glob("*.json"))), 2)
+
+    def test_abandoned_empty_claim_is_taken_over_not_wedged_forever(self):
+        """Post-review fix: a claim file left empty by a crash between
+        os.open(O_EXCL) and the content write must be taken over by the
+        next caller instead of permanently failing every future call for
+        that key."""
+        bi.BUSINESS_SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+        index_dir = bi.BUSINESS_SIGNALS_DIR / "_idempotency_index"
+        index_dir.mkdir(parents=True, exist_ok=True)
+        key_hash = bi.hashlib.sha256("crashed-key".encode("utf-8")).hexdigest()
+        (index_dir / f"{key_hash}.json").write_text("", encoding="utf-8")  # simulate crash: empty claim
+
+        got, created = bi._write_json_idempotent(
+            bi.BUSINESS_SIGNALS_DIR, "REC-RECOVER", "crashed-key", {"idempotency_key": "crashed-key", "v": 1}
+        )
+        self.assertTrue(created)
+        self.assertEqual(got["v"], 1)
+
 
 class DuplicateAndStaleTests(BusinessIntegrationTestCase):
     def test_duplicate_submission_of_same_external_event_is_a_no_op(self):
@@ -1204,6 +1271,15 @@ class TimezoneAwareEligibilityTests(BusinessIntegrationTestCase):
             [obs], activation_date="2026-08-14T00:00:00+00:00"
         )
         self.assertEqual(filtered, [])
+
+    def test_unparseable_activation_date_fails_closed_not_open(self):
+        """Post-review fix: an invalid activation_date used to silently
+        disable the activation filter entirely (fail-open, letting
+        pre-activation production data through). It must now fail loudly
+        instead of silently including everything."""
+        obs = self._obs("2026-08-01T00:00:00+00:00")
+        with self.assertRaises(ValueError):
+            bi.filter_official_evaluation_observations([obs], activation_date="not-a-real-timestamp")
 
 
 class ExperimentAutoActivationGuardTests(unittest.TestCase):

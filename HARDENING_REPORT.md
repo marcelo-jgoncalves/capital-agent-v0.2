@@ -2,8 +2,18 @@
 
 Source spec: `prompt-hardening-final-capital-agent-v0.2.md`. Baseline:
 `master` at commit `614f2f1` (plus `ec7f215`, already present before this
-session). Nothing here was committed, branched or pushed -- everything below
-lives in the working tree only.
+session).
+
+**Status update (2026-08-13, post-merge):** this work was committed, opened
+as PR #7 (`fix/final-hardening-integrity-idempotency`), reviewed, and
+squash-merged to `master` at commit `d34ea73`. The line above ("nothing
+committed") was accurate when this report was first written and is left
+unedited in the body below for an accurate record of what the original
+session produced; treat "Status update" here as the authoritative current
+state. See `## Post-review addendum` at the end of this file for a second,
+independent review (by Codex/OpenAI, requested by the responsible engineer
+after merge) that found real gaps in some of the invariants this report
+originally declared closed, and what was done about them.
 
 ## Resumo executivo
 
@@ -281,5 +291,99 @@ Crash/restart behavior after this pass:
   touched. EXP-001 remains dormant (`lifecycle_state` unchanged by this
   pass; `AutoActivationBlockedError` guard untouched and still tested).
 
-No `git commit`, branch, or PR was created for this work; it is left in the
-working tree per instructions, for a separate process to commit.
+No `git commit`, branch, or PR was created *by the agent that wrote the
+report above*; a separate process (the responsible engineer session)
+committed it as PR #7 and squash-merged it to `master` at `d34ea73`.
+
+## Post-review addendum (2026-08-13, after merge)
+
+After merging PR #7, the responsible engineer (Claude) asked a second,
+independent reviewer (Codex/OpenAI GPT-5.6, via the `codex` CLI, given this
+repo and the claims in this report) to critique the merged result. That
+review is saved in full at `../CODEX_REVIEW_INTERACTION.md` (interaction
+log) for audit. Its conclusion: the PR closes the specific bugs it targeted
+(`cmd_record` HER replay, canonical-state ExternalCashEvent posting,
+timezone-aware comparisons) correctly, but this report overstated how
+completely some invariants were closed. Findings, and what was done about
+each:
+
+**Fixed immediately (same session, before this addendum was written):**
+- `_write_json_idempotent`: claim filenames now hash the *full* idempotency
+  key (sha256, always) instead of a lossy char-substitution, and every
+  claim read validates `claim["idempotency_key"] == idempotency_key` before
+  trusting it -- closes a possible key-collision returning the wrong
+  record. An empty/abandoned claim (crash between `O_CREAT` and content
+  write) is now taken over instead of wedging that key shut forever. A
+  legacy pre-index record (written by the function's previous, scan-based
+  implementation) is now found via a one-time fallback scan and backfilled
+  into the index instead of being duplicated. The record write itself is
+  now temp-file + `os.replace()` instead of `write_text()`.
+- `filter_official_evaluation_observations`: an unparseable `activation_date`
+  used to silently disable the activation filter (fail-open, letting
+  pre-activation production data through) -- contradicting this report's
+  own stated invariant. Now raises `ValueError` explicitly instead.
+- `post_external_cash_event_to_ledger`: a retry with a stale but
+  *already-succeeded* (`LEDGER_POSTED`) event used to fail on the
+  `expected_state` precondition instead of returning the idempotent no-op,
+  because the precondition check ran before the `LEDGER_POSTED` check.
+  Reordered so `LEDGER_POSTED` is always checked first -- retries after a
+  confirmed success are unconditionally idempotent again.
+- `record-reserve-asset` (`capital_agent.py`): the read-check-append-write
+  critical section had no cross-process lock and used non-atomic
+  `write_text()`. Two processes booking *different* `execution_id`s
+  concurrently could lose one entry (last-writer-wins on the whole file);
+  a crash mid-write could corrupt `reserve_assets.json`. Fixed with a
+  generic `O_CREAT|O_EXCL` lock (`business_integration.acquire_generic_lock`,
+  factored out of the existing ledger-post lock so both share one
+  crash-recovery implementation) around the critical section, plus
+  temp-file + `os.replace()` for the write.
+
+**Deferred to backlog, not fixed in this pass (real, understood risk, but
+requires a larger change than a same-day surgical patch to a financial
+code path should get):**
+- `cmd_confirm_execution` (`capital_agent.py`) is **not** crash-safe or
+  concurrency-safe end to end: it appends to the ledger, then writes the
+  HER to `completed/`, then unlinks it from `pending/`, as three separate
+  non-atomic steps. A crash between the ledger append and the unlink
+  leaves the HER still `pending`; a naive retry (or two concurrent
+  `confirm-execution` calls racing on the same pending HER) can append a
+  second ledger line for the same execution. This means the report's
+  claim that "one HER -> at most one financial posting" is fully closed is
+  **too strong** -- it is closed for the specific replay-via-`record` path
+  this session targeted, not for confirm-execution's own crash window,
+  which predates this PR and was out of the P0 scope as written
+  (`prompt-hardening-final-capital-agent-v0.2.md` section 3 is specifically
+  about `cmd_record`, not `cmd_confirm_execution`'s internals). Filed as
+  `backlog/ADR-003-confirm-execution-atomicity.md` for the next hardening
+  round; this is the single most important follow-up.
+- `scheduler.py`'s snapshot atomicity closes crash recovery for a
+  **single writer**, not concurrent writers: two `scheduler run` processes,
+  or a `run` racing a `complete-job`, can each load the same snapshot,
+  mutate independent copies, and the second writer's `os.replace()`
+  silently discards the first writer's update (lost update, not corruption).
+  There is no lock, compare-and-swap, or generation counter enforcing a
+  single writer. In the current deployment model (scheduler invoked
+  manually/serially per [[capital_agent_pause_status]] -- no cron actually
+  running) this has not manifested, but the atomicity claim in this
+  report's "Scheduler" section should be read as "atomic under a
+  single-writer assumption," not "safe under concurrent writers." Filed as
+  a backlog follow-up alongside ADR-003.
+- No fsync of the temp file or containing directory is performed before/
+  after `os.replace()` in any of the atomic-write helpers added in this
+  pass (`save_json`, `_write_json_idempotent`, the reserve-asset write).
+  This means "atomic" here guarantees *visibility* atomicity under normal
+  filesystem operation (no reader ever sees a torn write), not durability
+  against real power loss / OS crash, where the rename itself could be
+  lost. Acceptable for the current single-machine, non-power-loss-critical
+  deployment; worth revisiting if this system ever runs on infrastructure
+  where sudden power loss is a realistic threat model.
+
+None of the deferred items represent a policy relaxation, a path to moving
+money without human confirmation, or an EXP-001/Editorial-Platform
+boundary violation -- they are concurrency/crash-recovery gaps in
+already-human-gated paths, not new unguarded paths. Given this is a
+single-operator system with no cron currently running
+([[capital_agent_pause_status]]), the practical exposure today is low; the
+gaps matter before this system is ever run unattended or by more than one
+operator/process at a time. Do not treat them as "fixed" in a future
+session without re-reading this addendum and `ADR-003`.
