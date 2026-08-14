@@ -333,10 +333,17 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
             return None
 
     def _write_claim_content(claim_record_id: str) -> None:
-        index_path.write_text(
+        # temp-file + os.replace() rather than write_text(), so a reader
+        # can never observe a truncated/partial claim mid-write (round 3,
+        # Codex review: write_text() truncates the destination before
+        # writing the new content, briefly exposing an empty file to any
+        # concurrent reader).
+        tmp = index_path.with_suffix(index_path.suffix + f".tmp-{uuid.uuid4().hex[:8]}")
+        tmp.write_text(
             json.dumps({"record_id": claim_record_id, "idempotency_key": idempotency_key}),
             encoding="utf-8",
         )
+        os.replace(tmp, index_path)
 
     def _legacy_scan_for_existing() -> Optional[tuple[dict, str]]:
         for existing_path in sorted(dir_path.glob("*.json")):
@@ -360,8 +367,9 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
         # Someone else's claim file exists for this key. It may be: (a) a
         # winner's valid, populated claim not yet visible to our first read
         # (race) -- poll briefly; or (b) an abandoned claim left by a
-        # process that crashed between os.open and os.write -- detect via
-        # the claim being empty/unreadable and take it over.
+        # process that crashed between os.open and _write_claim_content()
+        # -- detect via the claim being empty/unreadable and take it over.
+        recovered = False
         for _ in range(200):
             existing = _read_claimed_record()
             if existing is not None:
@@ -375,22 +383,58 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
                 claim_raw = ""
             if not claim_raw.strip():
                 # Abandoned/empty claim: take it over rather than wedging
-                # this key shut forever. We are about to write our own
-                # record (record_id, this call's), so the claim must point
-                # to it.
-                _write_claim_content(record_id)
-                break
+                # this key shut forever. Round 3, second Codex finding: an
+                # earlier version of this branch let every concurrent
+                # loser independently conclude "empty means abandoned" and
+                # each call _write_claim_content() with its OWN record_id
+                # -- multiple losers could all "win" the recovery
+                # simultaneously and each write a distinct data record,
+                # the same class of duplicate-write bug this whole
+                # function exists to prevent, just in the recovery path
+                # instead of the fast path. Fixed by serializing the
+                # recovery decision itself behind `acquire_generic_lock`
+                # (the same crash-recoverable exclusive-lock primitive
+                # already used elsewhere in this module for exactly this
+                # kind of "only one caller may decide" critical section),
+                # re-checking under the lock whether someone else already
+                # recovered it before writing our own claim.
+                recovery_lock_path = index_path.with_suffix(index_path.suffix + ".recovery-lock")
+                acquire_generic_lock(recovery_lock_path, max_lock_wait_s=2.0)
+                try:
+                    existing = _read_claimed_record()
+                    if existing is not None:
+                        return existing, False
+                    try:
+                        still_empty = not index_path.read_text(encoding="utf-8").strip()
+                    except OSError:
+                        still_empty = True
+                    if still_empty:
+                        _write_claim_content(record_id)
+                        recovered = True
+                finally:
+                    try:
+                        recovery_lock_path.unlink()
+                    except OSError:
+                        pass
+                if recovered:
+                    break
+                # Someone else recovered it (and, per the checks above,
+                # hasn't finished writing their record yet) -- fall through
+                # to the normal poll loop rather than treat this as our own
+                # win.
             time.sleep(0.005)
         else:
             raise RuntimeError(
                 f"idempotency race unresolved for key {idempotency_key!r}: claim file exists "
                 "but its record never became readable"
             )
-        # Fell through the loop (broke out): re-check once more, then
-        # proceed to write as if we own the claim now.
-        existing = _read_claimed_record()
-        if existing is not None:
-            return existing, False
+        if not recovered:
+            # Fell through the loop (broke out for a reason other than our
+            # own recovery, e.g. the claim vanished): re-check once more,
+            # then proceed to write as if we own the claim now.
+            existing = _read_claimed_record()
+            if existing is not None:
+                return existing, False
     else:
         # We only need O_CREAT|O_EXCL for its exclusivity guarantee (whoever
         # wins this open owns the key); write the actual claim content
