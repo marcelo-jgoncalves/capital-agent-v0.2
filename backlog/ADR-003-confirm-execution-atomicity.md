@@ -1,6 +1,8 @@
 # ADR-003: `cmd_confirm_execution` is not crash-safe or concurrency-safe
 
-Status: **proposed** (documented, not implemented)
+Status: **partially implemented** (items 1-2, the minimum viable fix, landed
+2026-08-14; item 3, the combined-durable-record redesign, remains proposed
+only -- see "Decision" below)
 Filed: 2026-08-13, as a follow-up from an independent (Codex/OpenAI) review
 of PR #7 (`fix/final-hardening-integrity-idempotency`), requested by the
 responsible engineer after merge. See `HARDENING_REPORT.md`'s "Post-review

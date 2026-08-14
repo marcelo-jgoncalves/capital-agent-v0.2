@@ -517,6 +517,39 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             self.assertIsNotNone(data["confirmation"])
             self.assertAlmostEqual(ca.cash_balance(), cash_before - (2.0 * 4.9 + 0.5), places=2)
 
+    def test_confirm_execution_sell_nets_fees_from_proceeds_not_adds_them(self):
+        # Codex review finding: SELL fees were being added on top of gross
+        # proceeds (mirroring BUY's cost formula) instead of subtracted from
+        # them, inflating recorded cash inflow by 2x the fee amount.
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args(action="SELL"))
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+            cash_before = ca.cash_balance()
+
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=2.0, executed_price=4.9, fees=0.5,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            )
+            with patch("builtins.print"):
+                ca.cmd_confirm_execution(confirm_args)
+
+            gross = 2.0 * 4.9
+            expected_net = round(gross - 0.5, 2)
+            self.assertAlmostEqual(ca.cash_balance(), cash_before + expected_net, places=2)
+
+    def test_confirm_execution_sell_refuses_when_fees_exceed_gross_proceeds(self):
+        with sandbox():
+            with patch("builtins.print"):
+                ca.cmd_request_execution(_execution_args(action="SELL"))
+            request_id = list(ca.HR_PENDING_DIR.glob("*.json"))[0].stem
+            confirm_args = argparse.Namespace(
+                id=request_id, executed_quantity=1.0, executed_price=1.0, fees=5.0,
+                executed_timestamp=None, category=None, ledger_type=None, notes="",
+            )
+            with self.assertRaises(SystemExit):
+                ca.cmd_confirm_execution(confirm_args)
+
     def test_confirm_execution_refuses_retry_after_already_completed(self):
         # ADR-003 minimum viable fix: a retry against an id that already has
         # a completed/<id>.json (e.g. an operator or automation retrying

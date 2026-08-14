@@ -1039,53 +1039,86 @@ def _write_lock_owner_info(fd: int, *, nonce: Optional[str] = None) -> None:
     os.write(fd, json.dumps(payload).encode("utf-8"))
 
 
+# A stale-lock takeover is only a handful of local filesystem operations
+# (open, write, close, replace, unlink); if the arbitration file below is
+# ever found older than this, its creator is assumed crashed mid-takeover
+# rather than legitimately still working, and it self-heals. Deliberately
+# much shorter than STALE_LOCK_MAX_AGE_SECONDS, which bounds a whole
+# caller-defined critical section, not just the takeover mechanics.
+TAKEOVER_ARBITRATION_MAX_AGE_SECONDS = 5
+
+
 def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
-    """Take over a stale lock and verify the takeover actually won.
+    """Take over a stale lock, with real (not merely observed) mutual
+    exclusion between racing takeover attempts.
 
-    A plain `os.replace(tmp, lock_path)` is atomic in the sense that the
-    filesystem never exposes a torn file, but it does NOT provide mutual
-    exclusion between two processes that both decide the same lock is stale
-    at the same time: both can independently create their own tmp file and
-    both `os.replace()` it onto `lock_path` -- each rename individually
-    succeeds, so both callers would (incorrectly) believe they now hold the
-    lock. This is a real, previously-undocumented bug found by an
-    independent (Codex) review.
+    An earlier version of this function tagged each takeover attempt with a
+    random nonce, called `os.replace(tmp, lock_path)`, then re-read
+    `lock_path` back to check whether its own nonce was the one that
+    persisted. That is NOT sufficient: `os.replace` is atomic (no torn
+    file is ever visible) but not exclusive. Two racers can interleave as
+    A-replace, A-read-back-sees-A (A now believes it won), B-replace,
+    B-read-back-sees-B (B now also believes it won) -- A already returned
+    True for the caller before B's replace even happened. The read-back
+    only proves "I was the writer as of my read", not "no one else will
+    write after me". An independent (Codex) review of the nonce-only
+    version caught this.
 
-    Fix: tag our takeover attempt with a random nonce, replace, then
-    re-read the lock file back. Because `os.replace` is atomic, whichever
-    takeover happened *last* is the content every reader observes; only the
-    caller whose nonce matches what is now persisted actually won mutual
-    exclusion. Every other racer sees a foreign nonce and must retry the
-    acquire loop (which will then see a fresh, non-stale lock owned by the
-    winner and simply wait/poll normally)."""
-    nonce = uuid.uuid4().hex
-    tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{nonce[:8]}")
-    tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    The actual fix: make the *takeover attempt itself* exclusive, not just
+    its result observable. A short-lived arbitration file at
+    `lock_path` + `.takeover-arbitration`, created with a real
+    `O_CREAT|O_EXCL` (a genuinely exclusive filesystem operation, unlike
+    `os.replace`), is required before a caller is allowed to `os.replace()`
+    onto `lock_path` at all. Exactly one racer can hold the arbitration
+    file at a time, so exactly one racer performs the replace at a time;
+    every other racer's `O_EXCL` create fails immediately and it reports
+    "did not win" without touching `lock_path`. The arbitration file is
+    removed in a `finally` so the next racer (if `lock_path` is still
+    stale, which it normally will not be once a takeover just succeeded)
+    can proceed."""
+    arbitration_path = lock_path.with_suffix(lock_path.suffix + ".takeover-arbitration")
     try:
-        _write_lock_owner_info(tfd, nonce=nonce)
-    finally:
-        os.close(tfd)
-    try:
-        os.replace(tmp_path, lock_path)  # atomic, but not exclusive -- verify below
-    except OSError:
-        # On Windows, os.replace() onto a path another thread/process has
-        # momentarily open (e.g. a concurrent racer's read-back below, or
-        # its own competing os.replace()) can raise a transient
-        # PermissionError/sharing-violation instead of silently overwriting
-        # as POSIX rename would. That is not a crash -- it just means we
-        # lost this takeover attempt to contention; treat it exactly like
-        # "lost the nonce race" so the caller falls back to the normal
-        # poll/retry loop instead of propagating an unhandled exception.
+        afd = os.open(str(arbitration_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(afd)
+    except FileExistsError:
         try:
-            tmp_path.unlink()
+            age_s = time.time() - arbitration_path.stat().st_mtime
+        except OSError:
+            age_s = 0.0
+        if age_s > TAKEOVER_ARBITRATION_MAX_AGE_SECONDS:
+            try:
+                arbitration_path.unlink()
+            except OSError:
+                pass
+        return False  # another racer is (or very recently was) taking over
+
+    try:
+        nonce = uuid.uuid4().hex
+        tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{nonce[:8]}")
+        tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            _write_lock_owner_info(tfd, nonce=nonce)
+        finally:
+            os.close(tfd)
+        try:
+            os.replace(tmp_path, lock_path)
+        except OSError:
+            # Windows can raise a transient PermissionError/sharing
+            # violation if lock_path is momentarily open elsewhere (e.g. a
+            # reader). We hold the arbitration file, so no other takeover
+            # attempt caused this; treat it as a transient failure to
+            # retry, not a crash.
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            return False
+        return True
+    finally:
+        try:
+            arbitration_path.unlink()
         except OSError:
             pass
-        return False
-    try:
-        content = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return False
-    return content.get("nonce") == nonce
 
 
 def _lock_is_stale(lock_path: Path) -> bool:
