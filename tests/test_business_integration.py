@@ -1060,6 +1060,46 @@ class WriteJsonIdempotentRaceTests(BusinessIntegrationTestCase):
         self.assertTrue(created)
         self.assertEqual(got["v"], 1)
 
+    def test_multiple_concurrent_recoverers_of_abandoned_claim_do_not_duplicate(self):
+        # Round 3, second Codex finding: the FIRST fix for the winner-path
+        # claim bug still left the *recovery* path (an empty/abandoned
+        # claim) unprotected -- multiple concurrent losers could each
+        # independently conclude "empty means abandoned" and each write
+        # their own data record. This directly reproduces that scenario
+        # with a barrier-synchronized multi-thread race against a claim
+        # that is genuinely abandoned (simulating a crash between
+        # os.open(O_EXCL) and the content write), not just contending for
+        # a live winner.
+        bi.BUSINESS_SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+        index_dir = bi.BUSINESS_SIGNALS_DIR / "_idempotency_index"
+        index_dir.mkdir(parents=True, exist_ok=True)
+        key_hash = bi.hashlib.sha256("crashed-key-multi".encode("utf-8")).hexdigest()
+        (index_dir / f"{key_hash}.json").write_text("", encoding="utf-8")  # simulate crash: empty claim
+
+        barrier = threading.Barrier(8)
+        results = []
+        results_lock = threading.Lock()
+
+        def worker(i):
+            barrier.wait()
+            record = {"idempotency_key": "crashed-key-multi", "payload": "same-content", "n": i}
+            got, created = bi._write_json_idempotent(
+                bi.BUSINESS_SIGNALS_DIR, f"REC-RECOVER-{i}", "crashed-key-multi", record
+            )
+            with results_lock:
+                results.append((got, created))
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        created_flags = [c for _, c in results]
+        self.assertEqual(sum(created_flags), 1)
+        record_files = [p for p in bi.BUSINESS_SIGNALS_DIR.glob("*.json")]
+        self.assertEqual(len(record_files), 1)
+
 
 class DuplicateAndStaleTests(BusinessIntegrationTestCase):
     def test_duplicate_submission_of_same_external_event_is_a_no_op(self):
