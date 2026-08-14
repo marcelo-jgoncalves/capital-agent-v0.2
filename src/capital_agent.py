@@ -808,12 +808,13 @@ def _find_pending_request(request_id: str) -> Path:
 
 def cmd_confirm_execution(args):
     # ADR-003 minimum viable fix: serialize the whole read-append-move
-    # critical section per HER id, and treat an existing completed/<id>.json
-    # as proof the financial posting already happened. This closes two of
-    # the failure modes an independent (Codex) review found:
+    # critical section (round 2: across ALL HER ids, not just the same one
+    # -- see below), and treat an existing completed/<id>.json as proof the
+    # financial posting already happened. This closes two of the failure
+    # modes an independent (Codex) review found:
     # - concurrent-confirmation duplication (two confirm-execution calls for
     #   the same id both pass _find_pending_request before either moves the
-    #   file) is fully closed by the per-id lock below.
+    #   file) is fully closed by the lock below.
     # - crash-retry duplication is closed ONLY for retries that happen
     #   after completed/<id>.json was actually written. A crash strictly
     #   between the ledger append and the completed/ write leaves a ledger
@@ -826,16 +827,23 @@ def cmd_confirm_execution(args):
     #   comment as claiming "no retry can ever produce a second ledger
     #   line" -- that is true for the concurrency case, not the crash case.
     #
-    # Also note: the lock here is scoped to a single HER id. Two DIFFERENT
-    # HER ids can still race each other's cash_balance() check and
-    # append_ledger() call (there is no lock across the whole ledger), so
+    # Round 2 fix (ENGINEERING_QUALITY_ROUNDS.md): round 1 scoped this lock
+    # to a single HER id, which left a real gap both independent reviewers
+    # (Claude and Codex) flagged as the top remaining risk: two DIFFERENT
+    # HER ids could race each other's cash_balance() check and
+    # append_ledger() call, since neither held the other's per-id lock, so
     # two individually-affordable executions confirmed at the same instant
-    # could jointly overspend verified cash. Tracked as a follow-up, not
-    # fixed in this pass; see ENGINEERING_QUALITY_ROUNDS.md round 1.
+    # could jointly overspend verified cash. Fixed by using ONE lock shared
+    # by every confirm-execution call regardless of HER id -- confirmations
+    # are a rare, human-driven action (not a throughput-sensitive path), so
+    # fully serializing them is an acceptable, simple, and actually correct
+    # fix rather than a scalability concern. This also still closes the
+    # concurrent-same-id case the per-id lock closed in round 1 (a single
+    # global lock trivially closes every case a per-id lock did).
     HR_COMPLETED_DIR.mkdir(parents=True, exist_ok=True)
     lock_dir = HUMAN_REQUESTS_DIR / "_wal"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / f"confirm-{args.id}.lock"
+    lock_path = lock_dir / "confirm-execution-global.lock"
     bi.acquire_generic_lock(lock_path, max_lock_wait_s=5.0)
     try:
         completed_path = HR_COMPLETED_DIR / f"{args.id}.json"

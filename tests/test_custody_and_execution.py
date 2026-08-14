@@ -630,6 +630,65 @@ class HumanExecutionRequestLifecycleTests(unittest.TestCase):
             data_rows = [ln for ln in ledger_lines[1:] if request_id in ln]
             self.assertEqual(len(data_rows), 1)
 
+    def test_confirm_execution_serializes_different_her_ids_against_shared_cash(self):
+        # Round 2 fix: two DIFFERENT HER ids, each individually affordable
+        # against verified cash (600 <= 1000), but jointly overspending it
+        # (600 + 600 = 1200 > 1000) if both cash_balance() checks ran before
+        # either append_ledger() call. Round 1 only locked per-HER-id, which
+        # left this race open; the lock is now global across all
+        # confirm-execution calls. Directly writes two pending HER files
+        # (bypassing the request-time single-allocation policy cap, which
+        # is orthogonal to this specific confirm-time race) to construct
+        # the overspend scenario.
+        with sandbox():
+            def _make_pending(request_id, capital):
+                data = {
+                    "id": request_id, "created_at": ca.now_iso(), "decision_id": None,
+                    "approval_id": None, "action": "BUY", "asset": "TEST",
+                    "quantity": 1.0, "max_price": capital, "max_total_capital": capital,
+                    "valid_until": "2099-01-01T00:00:00-03:00", "reason": "test",
+                    "expected_upside": "test", "maximum_plausible_loss": capital,
+                    "critic_assessment": "test", "reserve_instrument_claimed": False,
+                    "policy_status": "PASSED", "critical_decision": False,
+                    "criticality_reasons": [], "status": "pending",
+                    "instructions": "test", "confirmation": None,
+                }
+                (ca.HR_PENDING_DIR / f"{request_id}.json").write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                )
+
+            _make_pending("HER-TEST-A", 600.0)
+            _make_pending("HER-TEST-B", 600.0)
+
+            results = {}
+
+            def attempt(request_id):
+                confirm_args = argparse.Namespace(
+                    id=request_id, executed_quantity=1.0, executed_price=600.0, fees=0.0,
+                    executed_timestamp=None, category=None, ledger_type=None, notes="",
+                )
+                try:
+                    with patch("builtins.print"):
+                        ca.cmd_confirm_execution(confirm_args)
+                    results[request_id] = "ok"
+                except SystemExit:
+                    results[request_id] = "refused"
+
+            threads = [
+                threading.Thread(target=attempt, args=("HER-TEST-A",)),
+                threading.Thread(target=attempt, args=("HER-TEST-B",)),
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # Exactly one of the two must succeed; the other must be
+            # refused for exceeding verified cash, never both accepted.
+            self.assertEqual(list(results.values()).count("ok"), 1)
+            self.assertEqual(list(results.values()).count("refused"), 1)
+            self.assertGreaterEqual(ca.cash_balance(), 0.0)
+
     def test_cancel_execution_never_touches_ledger(self):
         with sandbox():
             with patch("builtins.print"):
