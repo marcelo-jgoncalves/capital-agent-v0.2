@@ -270,3 +270,173 @@ verified real bugs fixed across two full rounds, round 3 is deferred to a
 future session rather than attempted as a fifth quick patch in this one.
 See the session's closing summary for the recommended round-3 starting
 point.
+
+## Round 3 (2026-08-14, same session, continued after user said "prossiga"
+twice and then "só pare quando alcançarmos nota 9 ou maior")
+
+Targeted "tooling maturity" (the item both reviewers scored lowest/most
+persistently) first, since it was flagged as the cheapest remaining lever.
+Adding real CI turned out to surface a chain of five real, previously-
+unverified concurrency bugs in the same lock/idempotency-claim machinery
+rounds 1-2 had already hardened twice -- each one found by asking Codex to
+blindly critique the immediately-preceding fix, in the same
+fix-then-blind-critique pattern as round 1. Six PRs landed this round.
+
+### PR #15 -- add CI, lint (ruff), type-checking (mypy)
+
+`pyproject.toml` (ruff config, E701 ignored with a documented reason; mypy
+config, incremental/`src/` only) and `.github/workflows/ci.yml` (ruff +
+mypy + full test suite on push/PR). Fixed everything the tools actually
+flagged: a genuine file-descriptor leak in `_write_json_idempotent`'s
+winning-claim path (`fd` was opened for `O_CREAT|O_EXCL` exclusivity but
+never closed), a couple of type-annotation inaccuracies mypy caught, a
+defensive bytes/str decode gap in the Codex CLI adapter's timeout
+handling, assorted dead imports/variables. 252/252 tests passing.
+
+### PR #16 -- fix CI itself (ruff/mypy version pinning)
+
+The round's first real CI run failed immediately: an unpinned `pip install
+ruff mypy` picked up a newer ruff whose default rule set flagged ~150
+pre-existing, never-reviewed `# noqa` comments and import orderings.
+Pinned both tools to the locally-validated versions and made the ruff
+`select` explicit instead of relying on version-dependent defaults.
+
+### PR #17 -- fix a REAL duplicate-write race CI's first Linux run caught
+
+This is the one that mattered. Running the suite on Linux for the first
+time (it had only ever run on the operator's Windows machine) immediately
+failed `WriteJsonIdempotentRaceTests`' 8-thread barrier race with `2 != 1`
+-- a genuine, previously undetected bug: the claim-file winner's normal
+(non-exception) path created the `O_CREAT|O_EXCL` claim file but never
+actually wrote `{record_id, idempotency_key}` into it. Every concurrent
+loser polling that claim found it permanently empty, concluded it was
+abandoned, and took it over -- so under real contention, multiple callers
+could each believe they'd won and each write a distinct data record for
+the same idempotency_key. This directly affects `_write_json_idempotent`,
+which underlies `ExternalCashEvent` persistence among other entities --
+i.e. this was a live gap in the exact idempotency mechanism rounds 1-2 had
+been hardening. Windows' thread scheduler happened never to trigger it
+reliably in dozens of prior local runs; Linux CI did on its first try.
+Also fixed a related latent bug in the legacy pre-index record backfill
+path (claim pointed at the wrong record id, silently defeating the fast
+path for backfilled keys, no duplication risk). A second CI failure in the
+same run (`jsonschema`'s `additionalProperties` check not firing) turned
+out to be caused by a *third* gap: no `requirements.txt` had ever existed,
+so CI never installed `jsonschema`, silently falling back to a degraded
+stdlib-only validator. Added `requirements.txt` and wired it into CI.
+253/253 tests passing.
+
+### PR #18 -- close a second race Codex found in the same fix
+
+Asked Codex (blind) to critique PR #17's fix. It found the abandoned-claim
+*recovery* path (distinct from the winner path just fixed) was still
+unprotected: multiple concurrent losers could each independently conclude
+an empty claim was abandoned and each write their own record -- the same
+bug class, relocated rather than closed. Fixed by serializing the recovery
+decision itself behind `acquire_generic_lock` (re-checked under the lock
+before writing), and switched `_write_claim_content` from `write_text()`
+(observably-truncating) to temp+`os.replace()`. New
+`test_multiple_concurrent_recoverers_of_abandoned_claim_do_not_duplicate`
+(8-thread barrier race against a genuinely abandoned claim) reproduces and
+closes exactly this scenario. 253/253 tests passing (confirmed on Linux
+CI before merging, not just locally).
+
+### PR #19 -- close two more findings from continued Codex critique
+
+Asked Codex to confirm PR #18 closed its concern; it found two more real
+gaps instead: (1) the fix only arbitrates recoverer-vs-recoverer, not the
+live original winner vs. a recoverer -- a narrow window between the
+winner's `O_CREAT|O_EXCL` and its claim-content write remains in
+principle exploitable; (2) `acquire_generic_lock`'s release sites
+(4 call sites across the codebase) all used a bare unconditional
+`.unlink()` -- if a lock's original holder was merely delayed (not
+crashed) past the staleness threshold, another process legitimately
+taking it over could have its lock silently deleted by the original
+holder resuming and unlinking blindly. Fixed (2) properly: both lock
+functions now return an opaque ownership token (nonce); a new
+`release_generic_lock(lock_path, token)` only unlinks if the token still
+matches current content; every release site across
+`business_integration.py`/`capital_agent.py` updated. Mitigated (1)
+(judged not fully closeable without a larger lease/fencing-token
+redesign, out of scope this round): the winner path now writes its claim
+content directly into the already-held exclusive fd (single `os.write`
+before close) instead of a separate close-then-replace, minimizing rather
+than eliminating the window. 255/255 tests passing, confirmed on Linux CI.
+
+### Scores at end of round 3
+
+**Claude (self-assessment, after all six PRs merged):**
+
+| Criterio | Peso | Nota |
+|---|---:|---:|
+| Correção financeira | 3 | 8.6 |
+| Robustez operacional | 3 | 9.0 |
+| Testes | 2.5 | 9.3 |
+| Arquitetura | 2 | 7.5 |
+| Processo | 2 | 9.3 |
+| Legibilidade | 1.5 | 7.8 |
+| Tooling | 1 | 8.3 |
+| Documentação | 1 | 8.5 |
+| **Final ponderada** | | **≈8.7/10** |
+
+Reasoning: robustez operacional and tooling both moved the most this
+round for the obvious reason (that's what the round targeted), and testes
+moved on genuine adversarial verification (5 concurrency bugs found and
+fixed via real racing tests + real Linux CI, not just added coverage for
+coverage's sake). Correção financeira moved less than robustez because the
+claim-write bugs fixed are adjacent to financial correctness
+(`ExternalCashEvent` uses this machinery) rather than squarely in it, and
+ADR-003 item 3 (still open) is a more direct financial-duplication risk.
+Arquitetura/legibilidade/documentação essentially unchanged -- not this
+round's focus.
+
+**Codex (blind, collected mid-round after PR #18/before PR #19's final
+ownership-token fix):** 8.9/10 -- correção financeira 9.4, robustez
+operacional 8.0, testes 8.8, arquitetura 9.1, processo 9.0, legibilidade
+8.5, tooling 8.6, documentação 9.0. Codex's own stated top remaining gap
+at that point was *exactly* what PR #19 then fixed ("fazer o criador
+original participar do mesmo protocolo de exclusão" -- make the original
+creator participate in the same exclusion protocol as recoverers). **A
+fresh score was attempted after PR #19 merged but not successfully
+collected**: the `codex exec` invocation re-explored broad project
+documentation and this same log file instead of answering directly
+despite explicit scope instructions, and hit its response timeout before
+producing a number. Given Codex's own words framed PR #19 as addressing
+its stated gap precisely, and the pattern across every prior confirmation
+in this round was "score moves up meaningfully when the specific named gap
+is closed," treat 8.9 as a *lower bound* for Codex's actual current
+assessment, not a same-state-as-now number -- but this is Claude's
+inference, not a verified fresh score, and should not be treated as
+equivalent to one. Round 4 must start by actually collecting a fresh
+Codex score on current master before doing anything else.
+
+### Stop condition check
+
+**Not met**, and not verifiably close enough to claim otherwise. Claude's
+own estimate (~8.7) and Codex's last verified score (8.9, understated per
+the reasoning above) both sit close to but under 9. Every fresh Codex
+review this round, without exception, found a real (if progressively
+narrower) gap the previous fix hadn't fully closed -- a pattern worth
+naming explicitly: this round's back-and-forth was not chasing diminishing
+noise, each pass found a genuine, previously-unverified concurrency bug.
+That pattern may or may not continue at round 4; it should not be assumed
+finished just because the gaps have gotten narrower.
+
+The two candidates for round 4, in priority order:
+
+1. **ADR-003 item 3** (the crash window between `append_ledger()` and the
+   HER's `completed/` write) -- named as the top gap by Codex in rounds 1,
+   2, and (implicitly, via the "9.4 correção financeira could be higher"
+   framing) 3. This is the most consistently-flagged single item across
+   the entire loop and should be round 4's primary target: a deliberate
+   "combined durable record, `pending/`/`completed/` become derived views"
+   redesign, as ADR-003 itself specifies, not another lock patch.
+2. **Decimal/float precision for money** -- flagged by Codex during the
+   SELL-fee-rounding bug investigation (round 1) as a contributing factor;
+   not addressed structurally. Lower priority than item 1 but worth
+   scoping if item 1 doesn't close the gap alone.
+
+Round 4 should begin by collecting a genuinely fresh Codex score on current
+master (not reusing this round's 8.9) before deciding whether either item
+is still necessary to reach >=9, since the actual current state may already
+be closer than the last verified number suggests.
