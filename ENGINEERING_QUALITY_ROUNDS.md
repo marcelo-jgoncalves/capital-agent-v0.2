@@ -163,3 +163,110 @@ after the final fix in this round. Per the process rules in
 fresh blind score from Codex on current `master`, prioritize by weight ×
 gap (cross-HER cash race is the clear top candidate — it's the item both
 reviewers independently named), and repeat.
+
+## Round 2 (2026-08-14, same session as round 1)
+
+### PR #13 (`fix/cross-her-cash-race-and-takeover-restale-check`)
+
+Directly targeted the top-priority item both reviewers named at the end of
+round 1: `cmd_confirm_execution`'s lock was scoped per-HER-id, so two
+*different* HER ids could race each other's `cash_balance()` check and
+`append_ledger()` call and jointly overspend verified cash even though each
+was individually affordable.
+
+- Replaced the per-HER-id lock with a single global lock shared by every
+  `confirm-execution` call. Confirmations are a rare, human-driven action,
+  not a throughput-sensitive path, so full serialization is simple and
+  correct rather than a scalability tradeoff worth avoiding. A global lock
+  trivially subsumes every guarantee the round-1 per-id lock provided.
+- While writing the concurrency test for this fix, found (via a genuinely
+  flaky test run, not by inspection) and fixed a related self-contained-ness
+  gap in `_attempt_stale_lock_takeover`: it did not re-verify
+  `_lock_is_stale` after winning the arbitration file, so under direct
+  concurrent use (bypassing `acquire_generic_lock`'s own pre-check)
+  multiple sequential arbitration winners could each still replace an
+  already-fresh lock and report success. `acquire_generic_lock`'s own
+  staleness pre-check happened to mask this in the one real caller that
+  exists today, but the function's own contract should not depend on every
+  future caller re-checking staleness immediately before calling it. Fixed
+  by re-checking staleness under the arbitration file itself.
+- New test `test_confirm_execution_serializes_different_her_ids_against_shared_cash`:
+  constructs two individually-affordable-but-jointly-overspending pending
+  HERs directly (bypassing the request-time single-allocation policy cap,
+  which is orthogonal to this specific confirm-time race) and confirms
+  exactly one of two concurrent confirmations wins.
+- 252/252 tests passing (up from 251), full suite and the specific
+  previously-flaky `GenericLockStaleTakeoverMutexTests` each re-run 3-5x to
+  confirm no flakiness remained.
+- Merged to `master` at `1b90526`.
+
+### Scores at end of round 2
+
+**Claude (self-assessment):**
+
+| Criterio | Peso | Nota |
+|---|---:|---:|
+| Correção financeira | 3 | 8.0 |
+| Robustez operacional | 3 | 8.0 |
+| Testes | 2.5 | 8.7 |
+| Arquitetura | 2 | 7.5 |
+| Processo | 2 | 9.0 |
+| Legibilidade | 1.5 | 7.5 |
+| Tooling | 1 | 3.0 |
+| Documentação | 1 | 8.5 |
+| **Final ponderada** | | **≈7.8/10** |
+
+Reasoning: closing the cross-HER race removes the clearest concrete
+overspend scenario, so both high-weight criteria move up half a point.
+Nothing else changed this round — architecture, readability, tooling, and
+documentation scores carry over from round 1 because none of them were
+touched. Tooling (3.0) is now the single most obviously fixable
+low-effort-to-impact-ratio gap left (no CI/lint/type-checking exists at
+all), but fixing it doesn't move the two highest-weight criteria, which are
+what's actually keeping the weighted average below 9.
+
+**Codex (blind, fresh read of current master, not reused from round 1):**
+8.3/10 — correção financeira 9.2, robustez operacional 8.6, testes 7.0,
+arquitetura 8.5, processo 8.5, legibilidade 7.5, tooling 7.5, documentação
+8.5. Notably: Codex's financial-correctness and robustness scores jumped
+more than Claude's own (9.2 vs Claude's 8.0, 8.6 vs Claude's 8.0), and its
+"testes" score (7.0) actually *dropped* from its round-1 mid-round figure
+(8.5) — this review pass was deliberately scoped to only the two changed
+functions (to keep it fast and on-topic after two earlier attempts got lost
+re-exploring project documentation instead of answering), so the testes and
+tooling numbers this time are likely less independently grounded than
+round 1's broader read, not necessarily a real regression signal. Take the
+testes/tooling deltas with a grain of salt; the financeira/robustez numbers,
+which were the specific target of this round's fix, are the most trustworthy
+part of this score. Codex's own stated top remaining gap: the crash window
+between `append_ledger()` and the HER's `completed/` persistence (ADR-003
+item 3) — the same item flagged as open at the end of round 1, unchanged
+this round since it wasn't in scope.
+
+### Stop condition check
+
+**Not met.** Claude ≈7.8, Codex 8.3 — both below 9, and Codex's own
+identified gap is unchanged from round 1 (ADR-003 item 3, the crash-window
+duplication risk). Combined with round 1's finding, the two most
+significant remaining items are now clear and consistent across two
+independent reviewers across two rounds:
+
+1. **ADR-003 item 3** — the crash window between `append_ledger()` and the
+   `completed/` write is still open. Both rounds' reviews agree this needs
+   the "combined durable record, `pending/`/`completed/` become derived
+   views" redesign ADR-003 itself describes, not another lock-scoping
+   patch — this is a genuine architecture decision, not a bug fix, and
+   should be scoped as its own round rather than squeezed in opportunistically.
+2. **Tooling maturity** (score stuck at 3-7.5 across both reviewers, the
+   widest and most persistent disagreement between them) — no CI, lint, or
+   type-checking exists. This is the cheapest remaining lever by
+   effort-to-score-movement ratio, but it does not move the two
+   highest-weight criteria on its own.
+
+Given the scope of item 1 (a deliberate architecture decision, explicitly
+flagged in ADR-003 itself as something to do carefully rather than rush)
+and the session already having produced 4 merged PRs and 6 independently-
+verified real bugs fixed across two full rounds, round 3 is deferred to a
+future session rather than attempted as a fifth quick patch in this one.
+See the session's closing summary for the recommended round-3 starting
+point.
