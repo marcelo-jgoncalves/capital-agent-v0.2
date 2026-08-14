@@ -1111,6 +1111,18 @@ def _attempt_stale_lock_takeover(lock_path: Path) -> bool:
         return False  # another racer is (or very recently was) taking over
 
     try:
+        # Re-check staleness now that we hold the arbitration file. Another
+        # racer may have already won a takeover (or acquired the lock
+        # normally after it was released) while we were waiting; in that
+        # case lock_path is no longer stale and we must not touch it. This
+        # makes the function's own contract self-contained -- exactly one
+        # caller ever performs the replace for a given "lock became stale"
+        # episode -- rather than relying on every caller re-checking
+        # `_lock_is_stale` immediately before calling this function (which
+        # `acquire_generic_lock` does, but a future or different caller
+        # might not).
+        if not _lock_is_stale(lock_path):
+            return False
         nonce = uuid.uuid4().hex
         tmp_path = lock_path.with_suffix(lock_path.suffix + f".takeover-{nonce[:8]}")
         tfd = os.open(str(tmp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
