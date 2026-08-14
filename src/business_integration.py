@@ -34,7 +34,6 @@ import os
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -390,6 +389,15 @@ def _write_json_idempotent(dir_path: Path, record_id: str, idempotency_key: str,
         existing = _read_claimed_record()
         if existing is not None:
             return existing, False
+    else:
+        # We only need O_CREAT|O_EXCL for its exclusivity guarantee (whoever
+        # wins this open owns the key); the actual claim content is written
+        # separately below via `_write_claim_content()`'s own `write_text`
+        # call, not through this fd. Caught by ruff (F841, unused `fd`)
+        # while adding lint tooling in the engineering-quality round-3 pass
+        # -- a real file-descriptor leak on every successful call, not just
+        # an unused-variable style nit, since nothing else closed it.
+        os.close(fd)
 
     # We hold (or just took over) the claim. Before writing a brand-new
     # record, check for a legacy pre-index record with this idempotency_key
@@ -1346,7 +1354,15 @@ class ExperimentLifecycleError(ValueError):
     pass
 
 
-def validate_experiment_transition(current_state: str, new_state: str) -> None:
+def validate_experiment_transition(current_state: Optional[str], new_state: str) -> None:
+    # current_state is Optional because callers pass experiment.get(...) at
+    # the call site, which is `str | None` for a malformed/missing
+    # lifecycle_state field. Widened here (mypy, engineering-quality round
+    # 3) to match what this function's own body already handles correctly
+    # rather than forcing a caller-side cast: `None not in
+    # EXPERIMENT_LIFECYCLE_STATES` is True, so a missing lifecycle_state
+    # already fails closed with a clear error below, not a crash or a
+    # silent pass-through. No behavior change, only an accurate signature.
     if current_state not in EXPERIMENT_LIFECYCLE_STATES:
         raise ExperimentLifecycleError(f"unknown current lifecycle_state: {current_state!r}")
     if new_state not in EXPERIMENT_LIFECYCLE_TRANSITIONS.get(current_state, set()):
@@ -1502,7 +1518,7 @@ def ingest_publication_receipt(
         raise PublicationError("platform_content_id and verification_source are required")
     idem_key = f"{publication_request_id}:{platform_content_id}"
     receipt_id = f"PUBRCPT-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
-    record = {
+    record: dict = {
         "publication_id": receipt_id,
         "publication_request_id": publication_request_id,
         "platform_content_id": platform_content_id,

@@ -11,6 +11,7 @@ import json
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -569,8 +570,6 @@ class AlternativesComparisonTests(unittest.TestCase):
 # validation, metric temporal invariants, EXP-001 auto-activation guard.
 # ---------------------------------------------------------------------------
 
-import threading
-
 
 class CashEventPersistenceTests(BusinessIntegrationTestCase):
     def _to_reconciled(self):
@@ -672,7 +671,7 @@ class LedgerCrashSafetyTests(BusinessIntegrationTestCase):
         self.assertEqual(calls, [])  # append_ledger_fn was NOT called again
 
         lines = bi.LEDGER_FILE.read_text(encoding="utf-8").strip().splitlines()
-        matching = [l for l in lines if ev["idempotency_key"] in l]
+        matching = [line for line in lines if ev["idempotency_key"] in line]
         self.assertEqual(len(matching), 1)  # exactly one ledger line, no duplicate
 
     def test_retry_after_crash_before_ledger_write_posts_exactly_once(self):
@@ -728,7 +727,7 @@ class LedgerCrashSafetyTests(BusinessIntegrationTestCase):
 
         self.assertEqual(len(append_calls), 1)  # exactly one ledger append happened
         lines = bi.LEDGER_FILE.read_text(encoding="utf-8").strip().splitlines()
-        matching = [l for l in lines if ev["idempotency_key"] in l]
+        matching = [line for line in lines if ev["idempotency_key"] in line]
         self.assertEqual(len(matching), 1)
 
 
@@ -755,7 +754,7 @@ class StaleCashEventTransitionTests(BusinessIntegrationTestCase):
             kind="revenue", amount_brl=25.0, source_system="s", source_record_id="stale-tx-2",
             observed_at="2026-08-13T00:00:00Z",
         )
-        reported = bi.report_external_cash_event(ev, report_source="file_adapter")
+        bi.report_external_cash_event(ev, report_source="file_adapter")
         with self.assertRaises(bi.StaleCashEventStateError):
             bi.report_external_cash_event(ev, report_source="file_adapter")
         # Reloading gives the caller the canonical state, which CAN advance.

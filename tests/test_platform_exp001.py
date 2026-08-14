@@ -6,7 +6,6 @@ domain/sunk-cost exclusion from accounting, and activation requiring an
 explicit human record rather than any inference from technical completion.
 """
 import json
-import re
 import unittest
 from pathlib import Path
 

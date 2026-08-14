@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1125,9 +1124,9 @@ def build_current_state() -> str:
     if reserve_assets:
         for a in reserve_assets:
             lines.append(f"  - {a.get('id')}: {a.get('asset')} — BRL {a.get('book_value_brl')} (execution {a.get('execution_id')})")
-    lines.append(f"- Capital invested (market/experiment buckets): not yet implemented (no bucket-level ledger breakdown)")
-    lines.append(f"- Capital committed (open experiment budgets not yet spent): not yet implemented")
-    lines.append(f"- Drawdown from equity high-water mark: not yet implemented (no high-water-mark tracking yet)")
+    lines.append("- Capital invested (market/experiment buckets): not yet implemented (no bucket-level ledger breakdown)")
+    lines.append("- Capital committed (open experiment budgets not yet spent): not yet implemented")
+    lines.append("- Drawdown from equity high-water mark: not yet implemented (no high-water-mark tracking yet)")
     lines.append(f"- Ledger entries: {len(ledger)}")
     lines.append("")
     lines.append("## Execution tier & limits (config/policy.json)")

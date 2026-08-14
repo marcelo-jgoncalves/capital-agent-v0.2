@@ -40,6 +40,16 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _decode_subprocess_output(value: "bytes | str | None") -> str:
+    """Normalize a subprocess.TimeoutExpired.stdout/.stderr value to str.
+    See run_codex_exec's except block for why this exists."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 @dataclass
 class HealthcheckResult:
     available: bool
@@ -164,8 +174,15 @@ def run_codex_exec(prompt: str, *, sandbox: str, workdir: Path,
     except subprocess.TimeoutExpired as exc:
         timed_out = True
         exit_code = -1
-        stdout = exc.stdout or ""
-        stderr = (exc.stderr or "") + "\ncodex exec timed out"
+        # subprocess.run() was called with text=True, so at runtime
+        # exc.stdout/exc.stderr are always str here; typeshed's stub for
+        # TimeoutExpired types them as `bytes | str | None` regardless
+        # (it doesn't track the call site's text= argument). Decode
+        # defensively rather than assume/cast, so this stays correct even
+        # if a future edit removes text=True from the subprocess.run call
+        # above without updating this except block.
+        stdout = _decode_subprocess_output(exc.stdout)
+        stderr = _decode_subprocess_output(exc.stderr) + "\ncodex exec timed out"
     except OSError as exc:
         exit_code = -1
         stdout = ""
