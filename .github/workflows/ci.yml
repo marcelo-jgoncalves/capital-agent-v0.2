@@ -15,7 +15,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lint/type-check tools
-        run: pip install ruff mypy
+        # Pinned to the versions this config was actually validated
+        # against locally. An unpinned `pip install ruff mypy` broke CI
+        # the first time this workflow ran: a newer ruff's default rule
+        # set differs from what pyproject.toml's `select` was written
+        # against, and mypy's inference/strictness also drifts between
+        # versions. Bump deliberately (and re-validate locally) rather
+        # than floating.
+        run: pip install ruff==0.15.11 mypy==1.20.2
       - name: Lint (ruff)
         run: ruff check src/ tests/
       - name: Type-check (mypy, src/ only -- see pyproject.toml note on adapters/)
